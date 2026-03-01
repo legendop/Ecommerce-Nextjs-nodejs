@@ -1,0 +1,493 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// USERS & AUTHENTICATION
+// ==========================================
+model User {
+  id            BigInt    @id @default(autoincrement())
+  phone         String    @unique @db.VarChar(15)
+  email         String?   @unique @db.VarChar(255)
+  name          String?   @db.VarChar(120)
+  role          Role      @default(USER)
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  addresses     Address[]
+  cartItems     CartItem[]
+  orders        Order[]
+  reviews       Review[]
+  formSubmissions FormSubmission[]
+  events        Event[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model OtpCode {
+  id          BigInt   @id @default(autoincrement())
+  phone       String   @db.VarChar(15)
+  codeHash    String   @map("code_hash") @db.VarChar(255)
+  expiresAt   DateTime @map("expires_at")
+  attempts    Int      @default(0)
+  verified    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([phone])
+  @@index([expiresAt])
+  @@map("otp_codes")
+}
+
+enum Role {
+  USER
+  ADMIN
+  MANAGER
+}
+
+// ==========================================
+// CATEGORY SYSTEM
+// ==========================================
+model Category {
+  id          BigInt    @id @default(autoincrement())
+  name        String    @db.VarChar(120)
+  slug        String    @unique @db.VarChar(160)
+  description String?   @db.Text
+  imageUrl    String?   @map("image_url") @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  catalogs    CatalogCategory[]
+
+  @@map("categories")
+}
+
+// ==========================================
+// CATALOG (Product Design/Model)
+// ==========================================
+model Catalog {
+  id            BigInt    @id @default(autoincrement())
+  name          String    @db.VarChar(255)
+  slug          String    @unique @db.VarChar(255)
+  description   String?   @db.Text
+  shortDesc     String?   @map("short_desc") @db.Text
+  bullets       Json?                           // ["100% cotton", "Premium quality"]
+  extraData     Json?     @map("extra_data")    // Future flexibility
+  imageUrl      String?   @map("image_url") @db.Text
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  categories    CatalogCategory[]
+  items         Item[]
+  reviews       Review[]
+  images        CatalogImage[]
+
+  @@index([isActive])
+  @@index([slug])
+  @@map("catalogs")
+}
+
+model CatalogImage {
+  id          BigInt   @id @default(autoincrement())
+  catalogId   BigInt   @map("catalog_id")
+  catalog     Catalog  @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  imageUrl    String   @map("image_url") @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([catalogId])
+  @@map("catalog_images")
+}
+
+// Many-to-Many: Catalog <-> Category
+model CatalogCategory {
+  catalogId   BigInt   @map("catalog_id")
+  categoryId  BigInt   @map("category_id")
+
+  catalog     Catalog  @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([catalogId, categoryId])
+  @@index([catalogId])
+  @@index([categoryId])
+  @@map("catalog_categories")
+}
+
+// ==========================================
+// ITEM (Sellable Unit/Variant)
+// ==========================================
+model Item {
+  id          BigInt    @id @default(autoincrement())
+  catalogId   BigInt    @map("catalog_id")
+  catalog     Catalog   @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+
+  // Optional attributes for variants
+  size        String?   @db.VarChar(50)
+  color       String?   @db.VarChar(50)
+
+  price       Decimal   @db.Decimal(10, 2)
+  discount    Decimal?  @db.Decimal(10, 2)
+  stock       Int       @default(0)
+  skuCode     String?   @unique @map("sku_code") @db.VarChar(100)
+  imageUrl    String?   @map("image_url") @db.Text
+
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+
+  @@index([catalogId])
+  @@index([isActive])
+  @@map("items")
+}
+
+// ==========================================
+// ADDRESS SYSTEM
+// ==========================================
+model Address {
+  id        BigInt    @id @default(autoincrement())
+  userId    BigInt    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fullName  String    @db.VarChar(120)
+  phone     String    @db.VarChar(15)
+  line1     String    @db.Text
+  line2     String?   @db.Text
+  city      String    @db.VarChar(120)
+  state     String    @db.VarChar(120)
+  pincode   String    @db.VarChar(20)
+  country   String    @default("India") @db.VarChar(80)
+  isDefault Boolean   @default(false) @map("is_default")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  orders    Order[]
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ==========================================
+// CART SYSTEM
+// ==========================================
+model CartItem {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  itemId    BigInt   @map("item_id")
+  item      Item     @relation(fields: [itemId], references: [id])
+
+  quantity  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, itemId])
+  @@index([itemId])
+  @@map("cart_items")
+}
+
+// ==========================================
+// ORDER SYSTEM
+// ==========================================
+model Order {
+  id              BigInt      @id @default(autoincrement())
+  orderNumber     String      @unique @map("order_number") @db.VarChar(40)
+  userId          BigInt      @map("user_id")
+  user            User        @relation(fields: [userId], references: [id])
+
+  addressId       BigInt      @map("address_id")
+  address         Address     @relation(fields: [addressId], references: [id])
+
+  subtotal        Decimal     @db.Decimal(10, 2)
+  deliveryCharge  Decimal     @default(0) @map("delivery_charge") @db.Decimal(10, 2)
+  discountAmount  Decimal     @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  totalAmount     Decimal     @map("total_amount") @db.Decimal(10, 2)
+
+  status          OrderStatus @default(PENDING)
+  paymentId       String?     @map("payment_id")
+  paymentMethod   String?     @map("payment_method") @db.VarChar(30)
+  deliveryRefId   String?     @map("delivery_ref_id") @db.VarChar(100)
+
+  notes           String?     @db.Text
+  ipAddress       String?     @map("ip_address") @db.VarChar(45)
+  userAgent       String?     @map("user_agent") @db.Text
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  orderItems      OrderItem[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        BigInt   @id @default(autoincrement())
+  orderId   BigInt   @map("order_id")
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  itemId    BigInt   @map("item_id")
+  item      Item     @relation(fields: [itemId], references: [id])
+
+  // Snapshot for history
+  name      String   @db.VarChar(255)
+  size      String?  @db.VarChar(50)
+  color     String?  @db.VarChar(50)
+  price     Decimal  @db.Decimal(10, 2)
+  discount  Decimal? @db.Decimal(10, 2)
+
+  quantity  Int
+  total     Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@index([itemId])
+  @@map("order_items")
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  CONFIRMED
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+// ==========================================
+// REVIEW SYSTEM
+// ==========================================
+model Review {
+  id          BigInt   @id @default(autoincrement())
+  catalogId   BigInt   @map("catalog_id")
+  catalog     Catalog  @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+
+  userId      BigInt   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rating      Int
+  comment     String?  @db.Text
+  isVerified  Boolean  @default(false) @map("is_verified")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([catalogId, userId])
+  @@index([catalogId])
+  @@index([userId])
+  @@map("reviews")
+}
+
+// ==========================================
+// COUPON SYSTEM
+// ==========================================
+model Coupon {
+  id                BigInt        @id @default(autoincrement())
+  code              String        @unique @db.VarChar(50)
+  discountType      DiscountType  @map("discount_type")
+  discountValue     Decimal       @map("discount_value") @db.Decimal(10, 2)
+  maxDiscount       Decimal?      @map("max_discount") @db.Decimal(10, 2)
+  minOrderAmount    Decimal?      @map("min_order_amount") @db.Decimal(10, 2)
+  usageLimit        Int?          @map("usage_limit")
+  usageCount        Int           @default(0) @map("usage_count")
+  expiresAt         DateTime?     @map("expires_at")
+  isActive          Boolean       @default(true) @map("is_active")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@map("coupons")
+}
+
+enum DiscountType {
+  PERCENT
+  FLAT
+}
+
+// ==========================================
+// PAYMENT TABLE
+// ==========================================
+model Payment {
+  id                  BigInt        @id @default(autoincrement())
+  orderId             BigInt        @unique @map("order_id")
+  provider            String        @db.VarChar(50)
+  providerOrderId     String?       @map("provider_order_id") @db.VarChar(255)
+  providerPaymentId   String?       @map("provider_payment_id") @db.VarChar(255)
+  signature           String?       @db.Text
+  amount              Decimal       @db.Decimal(10, 2)
+  currency            String        @default("INR") @db.VarChar(10)
+  status              PaymentStatus
+  failureReason       String?       @map("failure_reason") @db.Text
+  rawResponse         Json?         @map("raw_response")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  @@index([providerPaymentId])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+// ==========================================
+// ANALYTICS TABLES
+// ==========================================
+model Visit {
+  id          BigInt   @id @default(autoincrement())
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  userAgent   String?  @map("user_agent") @db.Text
+  path        String?  @db.Text
+  referrer    String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([path])
+  @@map("visits")
+}
+
+model Event {
+  id          BigInt   @id @default(autoincrement())
+  userId      BigInt?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType   String   @map("event_type") @db.VarChar(100)
+  entityType  String?  @map("entity_type") @db.VarChar(100)
+  entityId    BigInt?  @map("entity_id")
+  meta        Json?
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([eventType])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("events")
+}
+
+// ==========================================
+// DYNAMIC FORM SYSTEM
+// ==========================================
+model Form {
+  id              BigInt       @id @default(autoincrement())
+  name            String       @db.VarChar(120)
+  slug            String       @unique @db.VarChar(160)
+  description     String?      @db.Text
+  isActive        Boolean      @default(true) @map("is_active")
+  submitText      String?      @default("Submit") @map("submit_text") @db.VarChar(50)
+  successMessage  String?      @map("success_message") @db.Text
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  fields          FormField[]
+  submissions     FormSubmission[]
+
+  @@map("forms")
+}
+
+model FormField {
+  id            BigInt       @id @default(autoincrement())
+  formId        BigInt       @map("form_id")
+  form          Form         @relation(fields: [formId], references: [id], onDelete: Cascade)
+  label         String       @db.VarChar(255)
+  fieldKey      String       @map("field_key") @db.VarChar(100)
+  fieldType     FieldType    @map("field_type")
+  isRequired    Boolean      @default(false) @map("is_required")
+  placeholder   String?      @db.VarChar(255)
+  helpText      String?      @map("help_text") @db.Text
+  options       Json?
+  validation    Json?
+  defaultValue  String?      @map("default_value") @db.Text
+  sortOrder     Int          @default(0) @map("sort_order")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@unique([formId, fieldKey])
+  @@index([formId])
+  @@map("form_fields")
+}
+
+model FormSubmission {
+  id          BigInt   @id @default(autoincrement())
+  formId      BigInt   @map("form_id")
+  form        Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  userId      BigInt?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  data        Json
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  userAgent   String?  @map("user_agent") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([formId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("form_submissions")
+}
+
+enum FieldType {
+  TEXT
+  EMAIL
+  PHONE
+  NUMBER
+  TEXTAREA
+  SELECT
+  RADIO
+  CHECKBOX
+  DATE
+  FILE
+  HIDDEN
+}
+
+// ==========================================
+// SETTINGS & AUDIT
+// ==========================================
+model Setting {
+  id            BigInt   @id @default(autoincrement())
+  key           String   @unique @db.VarChar(100)
+  value         String   @db.Text
+  type          String   @default("string") @db.VarChar(20)
+  description   String?  @db.Text
+  isPublic      Boolean  @default(false) @map("is_public")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  userId      BigInt?  @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String   @db.VarChar(255)
+  entityType  String   @map("entity_type") @db.VarChar(100)
+  entityId    BigInt?  @map("entity_id")
+  oldValues   Json?    @map("old_values")
+  newValues   Json?    @map("new_values")
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  userAgent   String?  @map("user_agent") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

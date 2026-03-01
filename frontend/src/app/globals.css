@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 46, 42, 57;
+  --background-start-rgb: 253, 251, 247;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply text-brand-purple bg-brand-cream;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-full shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-purple text-white hover:bg-brand-pink-dark focus:ring-brand-pink;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-brand-purple border-brand-purple hover:bg-brand-pink-light focus:ring-brand-pink;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+
+  .btn-pink {
+    @apply btn bg-brand-pink text-white hover:bg-brand-pink-dark focus:ring-brand-pink;
+  }
+
+  .input {
+    @apply block w-full rounded-full border-gray-300 shadow-sm focus:border-brand-pink focus:ring-brand-pink sm:text-sm px-4 py-2;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-brand-purple mb-1;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-100 hover:shadow-md transition-shadow;
+  }
+
+  .section-title {
+    @apply text-2xl md:text-3xl font-bold text-brand-purple mb-2;
+  }
+
+  .section-subtitle {
+    @apply text-sm text-gray-500 mb-6;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .announcement-bar {
+    background: linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%);
+    background-size: 200% auto;
+    animation: shine 4s linear infinite;
+  }
+
+  @keyframes shine {
+    to {
+      background-position: 200% center;
+    }
+  }
+}
