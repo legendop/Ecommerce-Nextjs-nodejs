@@ -37,7 +37,7 @@ export const productService = {
    * Get product by slug
    */
   getProductBySlug: async (slug: string): Promise<Product> => {
-    const response = await apiClient.get<Product>(`/products/${slug}`);
+    const response = await apiClient.get<Product>(`/products/details/${slug}`);
     return response.data.data as Product;
   },
 

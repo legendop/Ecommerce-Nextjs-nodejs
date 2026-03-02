@@ -5,12 +5,12 @@ import { CartItem } from '@/types';
 interface CartState {
   items: CartItem[];
   addItem: (item: Omit<CartItem, 'total'>) => void;
-  removeItem: (productId: string) => void;
-  updateQuantity: (productId: string, quantity: number) => void;
+  removeItem: (productId: string, listingId?: string) => void;
+  updateQuantity: (productId: string, quantity: number, listingId?: string) => void;
   clearCart: () => void;
   getTotalItems: () => number;
   getSubtotal: () => number;
-  getItemsForValidation: () => Array<{ productId: string; quantity: number }>;
+  getItemsForValidation: () => Array<{ listingId: string; quantity: number }>;
 }
 
 export const useCartStore = create<CartState>()(
@@ -20,14 +20,15 @@ export const useCartStore = create<CartState>()(
 
       addItem: (item) => {
         set((state) => {
+          // Match by listingId if available, otherwise by productId
           const existingItem = state.items.find(
-            (i) => i.productId === item.productId
+            (i) => (item.listingId && i.listingId === item.listingId) || i.productId === item.productId
           );
 
           if (existingItem) {
             return {
               items: state.items.map((i) =>
-                i.productId === item.productId
+                (item.listingId && i.listingId === item.listingId) || i.productId === item.productId
                   ? {
                       ...i,
                       quantity: Math.min(i.quantity + item.quantity, i.stock),
@@ -47,16 +48,18 @@ export const useCartStore = create<CartState>()(
         });
       },
 
-      removeItem: (productId) => {
+      removeItem: (productId, listingId?: string) => {
         set((state) => ({
-          items: state.items.filter((i) => i.productId !== productId),
+          items: state.items.filter((i) =>
+            listingId ? i.listingId !== listingId : i.productId !== productId
+          ),
         }));
       },
 
-      updateQuantity: (productId, quantity) => {
+      updateQuantity: (productId, quantity, listingId?: string) => {
         set((state) => ({
           items: state.items.map((i) =>
-            i.productId === productId
+            (listingId ? i.listingId === listingId : i.productId === productId)
               ? { ...i, quantity: Math.max(0, Math.min(quantity, i.stock)), total: i.price * Math.max(0, Math.min(quantity, i.stock)) }
               : i
           ).filter((i) => i.quantity > 0),
@@ -75,7 +78,7 @@ export const useCartStore = create<CartState>()(
 
       getItemsForValidation: () => {
         return get().items.map((item) => ({
-          productId: item.productId,
+          listingId: item.listingId || item.productId,
           quantity: item.quantity,
         }));
       },

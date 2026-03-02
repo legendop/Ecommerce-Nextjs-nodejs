@@ -1,71 +1,90 @@
 import { Router } from 'express';
-import { body, param } from 'express-validator';
+import { body } from 'express-validator';
 import {
   listProducts,
-  getProduct,
+  getProductDetails,
+  adminListProducts,
+  adminGetProduct,
   createProduct,
   updateProduct,
   deleteProduct,
-  adminListProducts,
+  toggleProductStatus,
 } from './controller';
-import { authenticate, requireAdmin } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
-// Public routes
+// ==========================================
+// PUBLIC ROUTES
+// ==========================================
+
+// List products with filters
 router.get('/', listProducts);
-router.get('/:slug', getProduct);
 
-// Admin routes
-router.get('/admin/all', authenticate, requireAdmin, adminListProducts);
+// Get product details (for product page)
+router.get('/details/:slug', getProductDetails);
 
+// ==========================================
+// ADMIN ROUTES (Manager and above)
+// ==========================================
+
+// List all products with full details
+router.get('/admin/all', authenticate, requireManager, adminListProducts);
+
+// Get single product by ID with all details
+router.get('/admin/:id', authenticate, requireManager, adminGetProduct);
+
+// Create product with listings and images
 router.post(
   '/admin',
   authenticate,
-  requireAdmin,
-  validate([
+  requireManager,
+  [
     body('name').trim().notEmpty().withMessage('Name is required'),
     body('slug').trim().notEmpty().withMessage('Slug is required'),
-    body('price')
-      .isFloat({ min: 0 })
-      .withMessage('Price must be a positive number'),
-    body('stock')
-      .optional()
-      .isInt({ min: 0 })
-      .withMessage('Stock must be a non-negative integer'),
-    body('categoryId')
-      .optional()
-      .isNumeric()
-      .withMessage('Invalid category ID'),
-  ]),
+    body('description').optional().trim(),
+    body('colorName').optional().trim(),
+    body('colorCode').optional().trim(),
+    body('gender').optional().trim(),
+    body('categoryIds').optional().isArray().withMessage('categoryIds must be an array'),
+    body('images').optional().isArray().withMessage('images must be an array'),
+    body('images.*.imageUrl').notEmpty().withMessage('imageUrl is required'),
+    body('listings').optional().isArray().withMessage('listings must be an array'),
+    body('listings.*.price').isNumeric().withMessage('price must be a number'),
+    body('isActive').optional().isBoolean(),
+    body('sortOrder').optional().isInt(),
+  ],
+  validate,
   createProduct
 );
 
+// Update product with listings and images
 router.patch(
   '/admin/:id',
   authenticate,
-  requireAdmin,
-  validate([
-    param('id').isNumeric().withMessage('Invalid product ID'),
-    body('price')
-      .optional()
-      .isFloat({ min: 0 })
-      .withMessage('Price must be a positive number'),
-    body('stock')
-      .optional()
-      .isInt({ min: 0 })
-      .withMessage('Stock must be a non-negative integer'),
-  ]),
+  requireManager,
+  [
+    body('name').optional().trim().notEmpty(),
+    body('slug').optional().trim().notEmpty(),
+    body('description').optional().trim(),
+    body('colorName').optional().trim(),
+    body('colorCode').optional().trim(),
+    body('gender').optional().trim(),
+    body('categoryIds').optional().isArray(),
+    body('images').optional().isArray(),
+    body('listings').optional().isArray(),
+    body('isActive').optional().isBoolean(),
+    body('sortOrder').optional().isInt(),
+  ],
+  validate,
   updateProduct
 );
 
-router.delete(
-  '/admin/:id',
-  authenticate,
-  requireAdmin,
-  validate([param('id').isNumeric().withMessage('Invalid product ID')]),
-  deleteProduct
-);
+// Delete product (soft delete)
+router.delete('/admin/:id', authenticate, requireManager, deleteProduct);
+
+// Toggle product status
+router.patch('/admin/:id/toggle', authenticate, requireManager, toggleProductStatus);
 
 export default router;

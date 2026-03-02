@@ -4,15 +4,22 @@ import { successResponse, errorResponse, paginatedResponse, createPaginationMeta
 import { getPaginationParams } from '../../utils/pagination';
 import logger from '../../utils/logger';
 
-// Get reviews for a catalog (public)
-export const getCatalogReviews = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// PUBLIC API - Get reviews for a product
+// ==========================================
+export const getProductReviews = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { catalogId } = req.params;
+    const { productId } = req.params;
     const { page, limit, skip } = getPaginationParams(req);
+    const { verified } = req.query;
 
-    const where = {
-      catalogId: BigInt(catalogId),
+    const where: Record<string, unknown> = {
+      productId: BigInt(productId),
     };
+
+    if (verified === 'true') {
+      where.isVerified = true;
+    }
 
     const [reviews, total, stats] = await Promise.all([
       prisma.review.findMany({
@@ -22,6 +29,7 @@ export const getCatalogReviews = async (req: Request, res: Response): Promise<vo
             select: {
               id: true,
               name: true,
+              avatarUrl: true,
             },
           },
         },
@@ -31,7 +39,7 @@ export const getCatalogReviews = async (req: Request, res: Response): Promise<vo
       }),
       prisma.review.count({ where }),
       prisma.review.aggregate({
-        where,
+        where: { productId: BigInt(productId) },
         _avg: { rating: true },
         _count: { rating: true },
       }),
@@ -40,7 +48,7 @@ export const getCatalogReviews = async (req: Request, res: Response): Promise<vo
     // Get rating distribution
     const distribution = await prisma.review.groupBy({
       by: ['rating'],
-      where,
+      where: { productId: BigInt(productId) },
       _count: { rating: true },
     });
 
@@ -49,10 +57,7 @@ export const getCatalogReviews = async (req: Request, res: Response): Promise<vo
       ratingCounts[d.rating as keyof typeof ratingCounts] = d._count.rating;
     });
 
-    // Use successResponse instead of paginatedResponse since we need to include stats
-    const meta = {
-      ...createPaginationMeta(page, limit, total),
-    };
+    const meta = createPaginationMeta(page, limit, total);
 
     successResponse(res, {
       reviews,
@@ -64,12 +69,14 @@ export const getCatalogReviews = async (req: Request, res: Response): Promise<vo
       },
     });
   } catch (error) {
-    logger.error('Get catalog reviews error:', error);
+    logger.error('Get product reviews error:', error);
     errorResponse(res, 'Failed to fetch reviews', 500, error);
   }
 };
 
-// Create review (authenticated + verified purchase)
+// ==========================================
+// USER API - Create review (verified purchase required)
+// ==========================================
 export const createReview = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -77,7 +84,7 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const { catalogId, rating, comment } = req.body;
+    const { productId, orderId, rating, title, comment, images } = req.body;
 
     // Validate rating
     if (rating < 1 || rating > 5) {
@@ -85,54 +92,65 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    // Check if user has purchased this catalog
-    const hasPurchased = await prisma.orderItem.findFirst({
+    // Check if order belongs to user and contains this product
+    const orderItem = await prisma.orderItem.findFirst({
       where: {
+        orderId: BigInt(orderId),
         order: {
           userId: req.user.id,
-          status: {
-            in: ['PAID', 'CONFIRMED', 'SHIPPED', 'DELIVERED'],
+          orderStatus: {
+            in: ['DELIVERED'],
           },
         },
-        item: {
-          catalogId: BigInt(catalogId),
+        listing: {
+          productId: BigInt(productId),
+        },
+      },
+      include: {
+        listing: {
+          select: {
+            productId: true,
+          },
         },
       },
     });
 
-    if (!hasPurchased) {
-      errorResponse(res, 'You can only review products you have purchased', 403);
+    if (!orderItem) {
+      errorResponse(res, 'You can only review products from delivered orders', 403);
       return;
     }
 
-    // Check if already reviewed
-    const existingReview = await prisma.review.findUnique({
+    // Check if already reviewed for this order
+    const existingReview = await prisma.review.findFirst({
       where: {
-        catalogId_userId: {
-          catalogId: BigInt(catalogId),
-          userId: req.user.id,
-        },
+        productId: BigInt(productId),
+        userId: req.user.id,
+        orderId: BigInt(orderId),
       },
     });
 
     if (existingReview) {
-      errorResponse(res, 'You have already reviewed this product', 400);
+      errorResponse(res, 'You have already reviewed this product for this order', 400);
       return;
     }
 
     const review = await prisma.review.create({
       data: {
-        catalogId: BigInt(catalogId),
+        productId: BigInt(productId),
         userId: req.user.id,
+        orderId: BigInt(orderId),
         rating,
+        title,
         comment,
-        isVerified: true, // Since we checked purchase
+        images: images || [],
+        isVerified: true,
       },
       include: {
         user: {
           select: {
             id: true,
             name: true,
+            avatarUrl: true,
           },
         },
       },
@@ -145,7 +163,9 @@ export const createReview = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Update own review
+// ==========================================
+// USER API - Update own review
+// ==========================================
 export const updateReview = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -154,7 +174,13 @@ export const updateReview = async (req: Request, res: Response): Promise<void> =
     }
 
     const { id } = req.params;
-    const { rating, comment } = req.body;
+    const { rating, title, comment, images } = req.body;
+
+    // Validate rating if provided
+    if (rating !== undefined && (rating < 1 || rating > 5)) {
+      errorResponse(res, 'Rating must be between 1 and 5', 400);
+      return;
+    }
 
     // Verify ownership
     const existingReview = await prisma.review.findFirst({
@@ -173,13 +199,16 @@ export const updateReview = async (req: Request, res: Response): Promise<void> =
       where: { id: BigInt(id) },
       data: {
         rating,
+        title,
         comment,
+        images,
       },
       include: {
         user: {
           select: {
             id: true,
             name: true,
+            avatarUrl: true,
           },
         },
       },
@@ -192,7 +221,9 @@ export const updateReview = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Delete own review
+// ==========================================
+// USER API - Delete own review
+// ==========================================
 export const deleteReview = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -204,7 +235,7 @@ export const deleteReview = async (req: Request, res: Response): Promise<void> =
 
     // Verify ownership (or admin)
     const where: Record<string, unknown> = { id: BigInt(id) };
-    if (req.user.role !== 'ADMIN') {
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'MANAGER') {
       where.userId = req.user.id;
     }
 
@@ -226,7 +257,9 @@ export const deleteReview = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Get user's own reviews
+// ==========================================
+// USER API - Get user's own reviews
+// ==========================================
 export const getMyReviews = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -243,12 +276,15 @@ export const getMyReviews = async (req: Request, res: Response): Promise<void> =
     const reviews = await prisma.review.findMany({
       where,
       include: {
-        catalog: {
+        product: {
           select: {
             id: true,
             name: true,
             slug: true,
-            imageUrl: true,
+            images: {
+              orderBy: { sortOrder: 'asc' },
+              take: 1,
+            },
           },
         },
       },
@@ -264,22 +300,54 @@ export const getMyReviews = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Admin: List all reviews
+// ==========================================
+// USER API - Mark review as helpful
+// ==========================================
+export const markHelpful = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const review = await prisma.review.update({
+      where: { id: BigInt(id) },
+      data: {
+        isHelpful: {
+          increment: 1,
+        },
+      },
+    });
+
+    successResponse(res, { isHelpful: review.isHelpful }, 'Marked as helpful');
+  } catch (error) {
+    logger.error('Mark helpful error:', error);
+    errorResponse(res, 'Failed to mark helpful', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - List all reviews
+// ==========================================
 export const adminListReviews = async (req: Request, res: Response): Promise<void> => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
-    const { catalogId, status } = req.query;
+    const { productId, status, search } = req.query;
 
     const where: Record<string, unknown> = {};
 
-    if (catalogId) {
-      where.catalogId = BigInt(catalogId as string);
+    if (productId) {
+      where.productId = BigInt(productId as string);
     }
 
     if (status === 'verified') {
       where.isVerified = true;
     } else if (status === 'unverified') {
       where.isVerified = false;
+    }
+
+    if (search) {
+      where.OR = [
+        { comment: { contains: search as string, mode: 'insensitive' } },
+        { title: { contains: search as string, mode: 'insensitive' } },
+      ];
     }
 
     const total = await prisma.review.count({ where });
@@ -291,14 +359,17 @@ export const adminListReviews = async (req: Request, res: Response): Promise<voi
           select: {
             id: true,
             name: true,
-            phone: true,
           },
         },
-        catalog: {
+        product: {
           select: {
             id: true,
             name: true,
             slug: true,
+            images: {
+              orderBy: { sortOrder: 'asc' },
+              take: 1,
+            },
           },
         },
       },
@@ -314,7 +385,47 @@ export const adminListReviews = async (req: Request, res: Response): Promise<voi
   }
 };
 
-// Admin: Verify/Unverify review
+// ==========================================
+// ADMIN API - Get single review
+// ==========================================
+export const adminGetReview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const review = await prisma.review.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        product: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    if (!review) {
+      errorResponse(res, 'Review not found', 404);
+      return;
+    }
+
+    successResponse(res, review);
+  } catch (error) {
+    logger.error('Admin get review error:', error);
+    errorResponse(res, 'Failed to fetch review', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - Verify/Unverify review
+// ==========================================
 export const verifyReview = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -329,5 +440,23 @@ export const verifyReview = async (req: Request, res: Response): Promise<void> =
   } catch (error) {
     logger.error('Verify review error:', error);
     errorResponse(res, 'Failed to update review', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - Delete any review
+// ==========================================
+export const adminDeleteReview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    await prisma.review.delete({
+      where: { id: BigInt(id) },
+    });
+
+    successResponse(res, null, 'Review deleted successfully');
+  } catch (error) {
+    logger.error('Admin delete review error:', error);
+    errorResponse(res, 'Failed to delete review', 500, error);
   }
 };

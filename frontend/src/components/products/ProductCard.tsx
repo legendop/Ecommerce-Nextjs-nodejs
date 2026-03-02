@@ -17,24 +17,39 @@ export function ProductCard({ product }: ProductCardProps) {
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    addToCart(product, 1);
+    // Add with first active listing
+    const listings = product.listings || product.items || [];
+    const activeListings = listings.filter((l: { isActive?: boolean; stock?: number }) => l.isActive !== false && (l.stock || 0) > 0);
+    const firstListing = activeListings[0] || listings[0];
+    addToCart(product, 1, firstListing);
     toast.success(`${product.name} added to cart`);
   };
 
-  const price = product.price ?? 0;
-  const stock = product.stock ?? 0;
-  const comparePrice = product.comparePrice ?? product.compareAtPrice ?? null;
+  // Handle listing-based product structure
+  const listings = product.listings || product.items || [];
+  const activeListings = listings.filter((l: { isActive?: boolean; stock?: number }) => l.isActive !== false && (l.stock || 0) > 0);
+  const firstListing = activeListings[0] || listings[0];
+
+  // Get price from listing
+  const price = firstListing?.price ?? product.price ?? 0;
+  const stock = activeListings.reduce((sum: number, l: { stock?: number }) => sum + (l.stock || 0), 0) || product.totalStock || product.stock || 0;
+  const comparePrice = firstListing?.discountAmount
+    ? Number(price) + Number(firstListing.discountAmount)
+    : product.comparePrice ?? product.compareAtPrice ?? null;
   const discount = comparePrice
-    ? calculateDiscount(Number(comparePrice), price)
+    ? calculateDiscount(Number(comparePrice), Number(price))
     : 0;
+
+  // Get image from firstImage or images array
+  const imageUrl = product.firstImage || product.images?.[0]?.imageUrl || product.imageUrl;
 
   return (
     <div className="card group flex flex-col">
       <Link href={`/product/${product.slug}`} className="block">
         <div className="relative aspect-square overflow-hidden bg-brand-pink-light">
-          {product.imageUrl ? (
+          {imageUrl ? (
             <Image
-              src={product.imageUrl}
+              src={imageUrl}
               alt={product.name}
               fill
               className="object-cover group-hover:scale-105 transition-transform duration-300"

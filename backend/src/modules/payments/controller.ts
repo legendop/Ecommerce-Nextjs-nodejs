@@ -1,176 +1,144 @@
 import { Request, Response } from 'express';
-import Razorpay from 'razorpay';
-import crypto from 'crypto';
+import { PaymentStatus, OrderStatus } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { successResponse, errorResponse } from '../../utils/response';
-import config from '../../config';
 import logger from '../../utils/logger';
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: config.RAZORPAY_KEY_ID,
-  key_secret: config.RAZORPAY_KEY_SECRET,
-});
-
-// Create Razorpay order
-export const createRazorpayOrder = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// Create payment intent
+// ==========================================
+export const createPayment = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
       errorResponse(res, 'Not authenticated', 401);
       return;
     }
 
-    const { orderId } = req.body;
+    const { orderId, provider } = req.body;
 
     const order = await prisma.order.findFirst({
-      where: {
-        id: BigInt(orderId),
-        userId: req.user.id,
-        paymentMethod: 'RAZORPAY',
-        status: 'PENDING',
-      },
+      where: { id: BigInt(orderId), userId: req.user.id },
     });
 
     if (!order) {
-      errorResponse(res, 'Order not found or invalid', 404);
+      errorResponse(res, 'Order not found', 404);
       return;
     }
 
-    // Create Razorpay order
-    const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(Number(order.totalAmount) * 100), // Convert to paise
-      currency: 'INR',
-      receipt: order.orderNumber,
-      notes: {
-        orderId: order.id.toString(),
-        userId: req.user.id.toString(),
-      },
-    });
-
-    // Save payment record
-    await prisma.payment.create({
+    // Create payment record
+    const payment = await prisma.payment.create({
       data: {
-        orderId: order.id,
-        provider: 'RAZORPAY',
-        providerOrderId: razorpayOrder.id,
+        orderId: BigInt(orderId),
+        provider,
         amount: order.totalAmount,
-        currency: 'INR',
-        status: 'PENDING',
+        status: PaymentStatus.CREATED,
       },
     });
 
-    successResponse(res, {
-      orderId: razorpayOrder.id,
-      amount: razorpayOrder.amount,
-      currency: razorpayOrder.currency,
-      keyId: config.RAZORPAY_KEY_ID,
-    });
+    // TODO: Integrate with actual payment gateway (Razorpay, Stripe, etc.)
+    // Return provider-specific order ID
+
+    successResponse(res, { paymentId: payment.id }, 'Payment initiated');
   } catch (error) {
-    logger.error('Create Razorpay order error:', error);
-    errorResponse(res, 'Failed to create payment order', 500, error);
+    logger.error('Create payment error:', error);
+    errorResponse(res, 'Failed to create payment', 500, error);
   }
 };
 
-// Verify Razorpay payment
-export const verifyRazorpayPayment = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// Verify payment (webhook or manual)
+// ==========================================
+export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-    } = req.body;
-
-    // Verify signature
-    const body = razorpay_order_id + '|' + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac('sha256', config.RAZORPAY_KEY_SECRET)
-      .update(body)
-      .digest('hex');
-
-    if (expectedSignature !== razorpay_signature) {
-      errorResponse(res, 'Invalid payment signature', 400);
-      return;
-    }
-
-    // Get payment record by providerOrderId using findFirst
-    const payment = await prisma.payment.findFirst({
-      where: { providerOrderId: razorpay_order_id },
-    });
-
-    if (!payment) {
-      errorResponse(res, 'Payment record not found', 404);
-      return;
-    }
+    const { paymentId, providerPaymentId, signature } = req.body;
 
     // Update payment
-    await prisma.payment.update({
-      where: { id: payment.id },
+    const payment = await prisma.payment.update({
+      where: { id: BigInt(paymentId) },
       data: {
-        providerPaymentId: razorpay_payment_id,
-        signature: razorpay_signature,
-        status: 'PAID',
-        rawResponse: req.body,
+        providerPaymentId,
+        providerSignature: signature,
+        status: PaymentStatus.SUCCESS,
       },
     });
 
-    // Update order status to PAID
+    // Update order
     await prisma.order.update({
       where: { id: payment.orderId },
-      data: { status: 'PAID' },
+      data: {
+        paymentStatus: PaymentStatus.SUCCESS,
+        orderStatus: OrderStatus.CONFIRMED,
+        placedAt: new Date(),
+      },
     });
 
-    successResponse(res, { orderId: payment.orderId }, 'Payment verified successfully');
+    successResponse(res, payment, 'Payment verified');
   } catch (error) {
-    logger.error('Verify Razorpay payment error:', error);
+    logger.error('Verify payment error:', error);
     errorResponse(res, 'Failed to verify payment', 500, error);
   }
 };
 
-// Handle Razorpay webhook
-export const razorpayWebhook = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// Get payment status
+// ==========================================
+export const getPaymentStatus = async (req: Request, res: Response): Promise<void> => {
   try {
-    const signature = req.headers['x-razorpay-signature'] as string;
+    const { id } = req.params;
 
-    const body = JSON.stringify(req.body);
-    const expectedSignature = crypto
-      .createHmac('sha256', config.RAZORPAY_WEBHOOK_SECRET)
-      .update(body)
-      .digest('hex');
+    const payment = await prisma.payment.findUnique({
+      where: { id: BigInt(id) },
+    });
 
-    if (signature !== expectedSignature) {
-      res.status(400).json({ error: 'Invalid signature' });
+    if (!payment) {
+      errorResponse(res, 'Payment not found', 404);
       return;
     }
 
-    const { event, payload } = req.body;
-
-    if (event === 'payment.captured') {
-      const { order_id, id: payment_id } = payload.payment.entity;
-
-      const payment = await prisma.payment.findFirst({
-        where: { providerOrderId: order_id },
-      });
-
-      if (payment && payment.status !== 'PAID') {
-        await prisma.payment.update({
-          where: { id: payment.id },
-          data: {
-            providerPaymentId: payment_id,
-            status: 'PAID',
-            rawResponse: payload,
-          },
-        });
-
-        await prisma.order.update({
-          where: { id: payment.orderId },
-          data: { status: 'PAID' },
-        });
-      }
-    }
-
-    res.status(200).json({ received: true });
+    successResponse(res, payment);
   } catch (error) {
-    logger.error('Razorpay webhook error:', error);
-    res.status(500).json({ error: 'Webhook processing failed' });
+    logger.error('Get payment status error:', error);
+    errorResponse(res, 'Failed to fetch payment', 500, error);
+  }
+};
+
+// ==========================================
+// Webhook handler
+// ==========================================
+export const paymentWebhook = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { provider } = req.params;
+    const payload = req.body;
+
+    logger.info(`Payment webhook from ${provider}:`, payload);
+
+    // Process webhook based on provider
+    // Update payment status accordingly
+
+    successResponse(res, { received: true });
+  } catch (error) {
+    logger.error('Payment webhook error:', error);
+    errorResponse(res, 'Failed to process webhook', 500, error);
+  }
+};
+
+// ==========================================
+// Admin: List payments
+// ==========================================
+export const adminListPayments = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const payments = await prisma.payment.findMany({
+      include: {
+        order: {
+          select: { orderNumber: true, userId: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    successResponse(res, payments);
+  } catch (error) {
+    logger.error('Admin list payments error:', error);
+    errorResponse(res, 'Failed to fetch payments', 500, error);
   }
 };

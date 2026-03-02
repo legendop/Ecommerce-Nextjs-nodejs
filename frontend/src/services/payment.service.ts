@@ -19,19 +19,27 @@ export interface VerifyPaymentRequest {
  */
 export const paymentService = {
   /**
-   * Create Razorpay order
+   * Create payment order
    */
-  createRazorpayOrder: async (orderId: string): Promise<RazorpayOrderResponse> => {
-    const response = await apiClient.post<RazorpayOrderResponse>('/payments/razorpay/create', { orderId });
+  createPayment: async (orderId: string, provider: string = 'razorpay'): Promise<RazorpayOrderResponse> => {
+    const response = await apiClient.post<RazorpayOrderResponse>('/payments/create', { orderId, provider });
     return response.data.data as RazorpayOrderResponse;
   },
 
   /**
-   * Verify Razorpay payment
+   * Verify payment
    */
-  verifyRazorpayPayment: async (data: VerifyPaymentRequest): Promise<{ orderId: string }> => {
-    const response = await apiClient.post<{ orderId: string }>('/payments/razorpay/verify', data);
+  verifyPayment: async (data: VerifyPaymentRequest): Promise<{ orderId: string }> => {
+    const response = await apiClient.post<{ orderId: string }>('/payments/verify', data);
     return response.data.data as { orderId: string };
+  },
+
+  /**
+   * Get payment status
+   */
+  getPaymentStatus: async (paymentId: string): Promise<unknown> => {
+    const response = await apiClient.get<unknown>(`/payments/${paymentId}/status`);
+    return response.data.data;
   },
 };
 

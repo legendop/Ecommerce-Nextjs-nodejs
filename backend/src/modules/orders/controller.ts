@@ -1,161 +1,13 @@
 import { Request, Response } from 'express';
-import { OrderStatus, Prisma } from '@prisma/client';
+import { OrderStatus } from '@prisma/client';
 import { prisma } from '../../config/prisma';
-import {
-  successResponse,
-  errorResponse,
-  paginatedResponse,
-  createPaginationMeta,
-} from '../../utils/response';
+import { successResponse, errorResponse, paginatedResponse, createPaginationMeta } from '../../utils/response';
 import { getPaginationParams } from '../../utils/pagination';
-import { generateOrderNumber } from '../../utils/jwt';
 import logger from '../../utils/logger';
 
-// Create order
-export const createOrder = async (req: Request, res: Response): Promise<void> => {
-  try {
-    if (!req.user) {
-      errorResponse(res, 'Not authenticated', 401);
-      return;
-    }
-
-    const { addressId, items, paymentMethod, couponCode, deliveryCharge = 0 } = req.body;
-
-    // Get address
-    const address = await prisma.address.findFirst({
-      where: { id: BigInt(addressId), userId: req.user.id },
-    });
-
-    if (!address) {
-      errorResponse(res, 'Address not found', 404);
-      return;
-    }
-
-    // Validate items
-    let subtotal = 0;
-    const orderItemsData: Array<{
-      itemId: bigint;
-      name: string;
-      price: number;
-      quantity: number;
-      total: number;
-      size?: string;
-      color?: string;
-    }> = [];
-
-    for (const item of items) {
-      const itemData = await prisma.item.findUnique({
-        where: { id: BigInt(item.itemId || item.productId) },
-        include: { catalog: true },
-      });
-
-      if (!itemData || !itemData.isActive) {
-        errorResponse(res, `Product ${item.itemId || item.productId} not found`, 400);
-        return;
-      }
-
-      if (itemData.stock < item.quantity) {
-        errorResponse(
-          res,
-          `Insufficient stock for ${itemData.catalog.name}. Available: ${itemData.stock}`,
-          400
-        );
-        return;
-      }
-
-      const total = Number(itemData.price) * item.quantity;
-      subtotal += total;
-
-      orderItemsData.push({
-        itemId: itemData.id,
-        name: itemData.catalog.name,
-        price: Number(itemData.price),
-        quantity: item.quantity,
-        total,
-        size: itemData.size || undefined,
-        color: itemData.color || undefined,
-      });
-    }
-
-    // Calculate discount
-    let discountAmount = 0;
-    if (couponCode) {
-      const coupon = await prisma.coupon.findUnique({
-        where: { code: couponCode.toUpperCase() },
-      });
-
-      if (
-        coupon &&
-        coupon.isActive &&
-        (!coupon.expiresAt || coupon.expiresAt > new Date()) &&
-        (!coupon.usageLimit || coupon.usageCount < coupon.usageLimit) &&
-        (!coupon.minOrderAmount || subtotal >= Number(coupon.minOrderAmount))
-      ) {
-        if (coupon.discountType === 'PERCENT') {
-          discountAmount = subtotal * (Number(coupon.discountValue) / 100);
-          if (coupon.maxDiscount && discountAmount > Number(coupon.maxDiscount)) {
-            discountAmount = Number(coupon.maxDiscount);
-          }
-        } else {
-          discountAmount = Number(coupon.discountValue);
-        }
-
-        // Update coupon usage
-        await prisma.coupon.update({
-          where: { id: coupon.id },
-          data: { usageCount: { increment: 1 } },
-        });
-      }
-    }
-
-    const totalAmount = subtotal + deliveryCharge - discountAmount;
-
-    // Create order
-    const order = await prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        userId: req.user.id,
-        addressId: address.id,
-        subtotal,
-        deliveryCharge,
-        discountAmount,
-        totalAmount,
-        paymentMethod,
-        status: OrderStatus.PENDING,
-        notes: couponCode ? `Coupon: ${couponCode.toUpperCase()}` : undefined,
-        ipAddress: req.ip || undefined,
-        userAgent: req.get('user-agent') || undefined,
-        orderItems: {
-          create: orderItemsData,
-        },
-      },
-      include: {
-        orderItems: true,
-        address: true,
-      },
-    });
-
-    // Update item stock
-    for (const item of items) {
-      await prisma.item.update({
-        where: { id: BigInt(item.itemId || item.productId) },
-        data: { stock: { decrement: item.quantity } },
-      });
-    }
-
-    // Clear user cart
-    await prisma.cartItem.deleteMany({
-      where: { userId: req.user.id },
-    });
-
-    successResponse(res, order, 'Order created successfully', 201);
-  } catch (error) {
-    logger.error('Create order error:', error);
-    errorResponse(res, 'Failed to create order', 500, error);
-  }
-};
-
-// Get user's orders
+// ==========================================
+// USER API - Get my orders
+// ==========================================
 export const getMyOrders = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -166,28 +18,24 @@ export const getMyOrders = async (req: Request, res: Response): Promise<void> =>
     const { page, limit, skip } = getPaginationParams(req);
 
     const where = { userId: req.user.id };
-
     const total = await prisma.order.count({ where });
 
     const orders = await prisma.order.findMany({
       where,
       include: {
-        orderItems: {
-          select: {
-            id: true,
-            name: true,
-            quantity: true,
-            price: true,
-            total: true,
+        items: {
+          include: {
+            listing: {
+              include: {
+                product: {
+                  select: { name: true, images: { take: 1 } },
+                },
+              },
+            },
           },
         },
-        address: {
-          select: {
-            fullName: true,
-            line1: true,
-            city: true,
-            state: true,
-          },
+        payments: {
+          select: { status: true, provider: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -202,7 +50,9 @@ export const getMyOrders = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// Get order details
+// ==========================================
+// USER API - Get single order
+// ==========================================
 export const getOrder = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -210,16 +60,24 @@ export const getOrder = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { orderNumber } = req.params;
+    const { id } = req.params;
 
     const order = await prisma.order.findFirst({
-      where: {
-        orderNumber,
-        userId: req.user.id,
-      },
+      where: { id: BigInt(id), userId: req.user.id },
       include: {
-        orderItems: true,
-        address: true,
+        items: {
+          include: {
+            listing: {
+              include: {
+                product: {
+                  select: { name: true, images: { take: 1 } },
+                },
+              },
+            },
+          },
+        },
+        payments: true,
+        shipments: true,
       },
     });
 
@@ -235,33 +93,113 @@ export const getOrder = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// Admin: List all orders
+// ==========================================
+// USER API - Create order
+// ==========================================
+export const createOrder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      errorResponse(res, 'Not authenticated', 401);
+      return;
+    }
+
+    const { items, addressSnapshot } = req.body;
+
+    // Calculate totals
+    let subtotal = 0;
+    const orderItems: Array<{
+      listingId: bigint;
+      productSnapshot: { name: string; size: string | null };
+      unitPrice: any;
+      discountAmount: any;
+      finalUnitPrice: number;
+      quantity: number;
+      totalAmount: number;
+    }> = [];
+
+    for (const item of items) {
+      const listing = await prisma.listing.findUnique({
+        where: { id: BigInt(item.listingId) },
+        include: { product: true },
+      });
+
+      if (!listing) {
+        errorResponse(res, `Listing ${item.listingId} not found`, 404);
+        return;
+      }
+
+      if (listing.stock < item.quantity) {
+        errorResponse(res, `Insufficient stock for ${listing.product.name}`, 400);
+        return;
+      }
+
+      const finalPrice = Number(listing.price) - Number(listing.discountAmount);
+      const total = finalPrice * item.quantity;
+      subtotal += total;
+
+      orderItems.push({
+        listingId: listing.id,
+        productSnapshot: {
+          name: listing.product.name,
+          size: listing.size || '',
+        },
+        unitPrice: listing.price,
+        discountAmount: listing.discountAmount,
+        finalUnitPrice: finalPrice,
+        quantity: item.quantity,
+        totalAmount: total,
+      });
+    }
+
+    const totalAmount = subtotal;
+    const orderNumber = `ORD${Date.now()}`;
+
+    const order = await prisma.$transaction(async (tx) => {
+      // Update stock
+      for (const item of items) {
+        await tx.listing.update({
+          where: { id: BigInt(item.listingId) },
+          data: { stock: { decrement: item.quantity } },
+        });
+      }
+
+      // Create order
+      return tx.order.create({
+        data: {
+          orderNumber,
+          userId: req.user!.id,
+          subtotal,
+          totalAmount,
+          addressSnapshot,
+          items: {
+            create: orderItems,
+          },
+        },
+        include: {
+          items: true,
+        },
+      });
+    });
+
+    successResponse(res, order, 'Order created successfully', 201);
+  } catch (error) {
+    logger.error('Create order error:', error);
+    errorResponse(res, 'Failed to create order', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - List all orders
+// ==========================================
 export const adminListOrders = async (req: Request, res: Response): Promise<void> => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
-    const { status, from, to, search } = req.query;
+    const { orderStatus } = req.query;
 
-    const where: Prisma.OrderWhereInput = {};
+    const where: Record<string, unknown> = {};
 
-    if (status) {
-      where.status = status as OrderStatus;
-    }
-
-    if (from || to) {
-      where.createdAt = {};
-      if (from) where.createdAt.gte = new Date(from as string);
-      if (to) where.createdAt.lte = new Date(to as string);
-    }
-
-    if (search) {
-      where.OR = [
-        { orderNumber: { contains: search as string, mode: 'insensitive' } },
-        {
-          user: {
-            phone: { contains: search as string },
-          },
-        },
-      ];
+    if (orderStatus) {
+      where.orderStatus = orderStatus as OrderStatus;
     }
 
     const total = await prisma.order.count({ where });
@@ -269,23 +207,11 @@ export const adminListOrders = async (req: Request, res: Response): Promise<void
     const orders = await prisma.order.findMany({
       where,
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-          },
+        items: {
+          select: { quantity: true, totalAmount: true },
         },
-        address: {
-          select: {
-            city: true,
-            state: true,
-          },
-        },
-        orderItems: {
-          select: {
-            quantity: true,
-          },
+        payments: {
+          select: { status: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -300,7 +226,9 @@ export const adminListOrders = async (req: Request, res: Response): Promise<void
   }
 };
 
-// Admin: Get order details
+// ==========================================
+// ADMIN API - Get single order
+// ==========================================
 export const adminGetOrder = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -308,16 +236,19 @@ export const adminGetOrder = async (req: Request, res: Response): Promise<void> 
     const order = await prisma.order.findUnique({
       where: { id: BigInt(id) },
       include: {
-        orderItems: true,
-        address: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            email: true,
+        items: {
+          include: {
+            listing: {
+              include: {
+                product: {
+                  select: { name: true, images: { take: 1 } },
+                },
+              },
+            },
           },
         },
+        payments: true,
+        shipments: true,
       },
     });
 
@@ -333,28 +264,55 @@ export const adminGetOrder = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Admin: Update order status
+// ==========================================
+// ADMIN API - Update order status
+// ==========================================
 export const updateOrderStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { status, trackingNumber, courierName } = req.body;
-
-    const updateData: Record<string, unknown> = { status };
-
-    // If shipping, can add tracking info
-    if (trackingNumber) {
-      // TODO: Save tracking info when shipment table is added
-      updateData.notes = `Tracking: ${trackingNumber} (${courierName || 'Courier'})`;
-    }
+    const { orderStatus } = req.body;
 
     const order = await prisma.order.update({
       where: { id: BigInt(id) },
-      data: updateData,
+      data: { orderStatus },
     });
 
     successResponse(res, order, 'Order status updated');
   } catch (error) {
     logger.error('Update order status error:', error);
     errorResponse(res, 'Failed to update order status', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - Cancel order
+// ==========================================
+export const cancelOrder = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const order = await prisma.order.update({
+      where: { id: BigInt(id) },
+      data: { orderStatus: OrderStatus.CANCELLED },
+    });
+
+    // Restore stock
+    const items = await prisma.orderItem.findMany({
+      where: { orderId: BigInt(id) },
+    });
+
+    await prisma.$transaction(
+      items.map((item) =>
+        prisma.listing.update({
+          where: { id: item.listingId },
+          data: { stock: { increment: item.quantity } },
+        })
+      )
+    );
+
+    successResponse(res, order, 'Order cancelled');
+  } catch (error) {
+    logger.error('Cancel order error:', error);
+    errorResponse(res, 'Failed to cancel order', 500, error);
   }
 };

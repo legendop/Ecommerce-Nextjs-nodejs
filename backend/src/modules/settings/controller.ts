@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import * as settingsService from './service';
 
 // GET /api/settings/public - Get public site configuration
-export async function getPublicSettings(req: Request, res: Response) {
+export async function getPublicSettings(_req: Request, res: Response) {
   try {
     const settings = await settingsService.getPublicSettings();
     res.json({
@@ -19,7 +19,7 @@ export async function getPublicSettings(req: Request, res: Response) {
 }
 
 // GET /api/settings - Get all settings (admin only)
-export async function getAllSettings(req: Request, res: Response) {
+export async function getAllSettings(_req: Request, res: Response) {
   try {
     const settings = await settingsService.getAllSettings();
     // Convert BigInt id to string for JSON serialization

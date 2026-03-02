@@ -1,67 +1,53 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { sendOtp, verifyOtp, getMe, logout, updateProfile } from './controller';
-import { authenticate } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
-import { otpLimiter, loginLimiter } from '../../middleware/rateLimiter';
+import { sendOtp, verifyOtp, getProfile, updateProfile, listUsers, updateUserRole } from './controller';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
 // Send OTP
 router.post(
   '/send-otp',
-  otpLimiter,
-  validate([
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^[0-9]{10}$/)
-      .withMessage('Invalid phone number format'),
-  ]),
+  [
+    body('identifier').notEmpty().withMessage('Identifier is required'),
+    body('authType').optional().isIn(['PHONE', 'EMAIL']).withMessage('Invalid auth type'),
+  ],
+  validate,
   sendOtp
 );
 
 // Verify OTP
 router.post(
   '/verify-otp',
-  loginLimiter,
-  validate([
-    body('phone')
-      .notEmpty()
-      .withMessage('Phone number is required')
-      .matches(/^[0-9]{10}$/)
-      .withMessage('Invalid phone number format'),
-    body('otp')
-      .notEmpty()
-      .withMessage('OTP is required')
-      .matches(/^[0-9]{6}$/)
-      .withMessage('OTP must be 6 digits'),
-  ]),
+  [
+    body('identifier').notEmpty().withMessage('Identifier is required'),
+    body('otp').notEmpty().withMessage('OTP is required'),
+    body('authType').optional().isIn(['PHONE', 'EMAIL', 'GOOGLE']),
+  ],
+  validate,
   verifyOtp
 );
 
 // Get current user
-router.get('/me', authenticate, getMe);
-
-// Logout
-router.post('/logout', logout);
+router.get('/profile', authenticate, getProfile);
 
 // Update profile
 router.patch(
   '/profile',
   authenticate,
-  validate([
-    body('name')
-      .optional()
-      .trim()
-      .isLength({ min: 2, max: 120 })
-      .withMessage('Name must be between 2 and 120 characters'),
-    body('email')
-      .optional()
-      .isEmail()
-      .withMessage('Invalid email format'),
-  ]),
+  [
+    body('name').optional().trim(),
+    body('avatarUrl').optional().trim(),
+  ],
+  validate,
   updateProfile
 );
+
+// Admin: List all users
+router.get('/admin/users', authenticate, requireManager, listUsers);
+
+// Admin: Update user role
+router.patch('/admin/users/:id/role', authenticate, requireManager, updateUserRole);
 
 export default router;

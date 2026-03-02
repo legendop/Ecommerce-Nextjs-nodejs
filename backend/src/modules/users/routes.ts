@@ -6,8 +6,8 @@ import {
   updateUser,
   deactivateUser,
 } from './controller';
-import { authenticate, requireAdmin } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
+import { authenticate, requireAdmin } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
@@ -18,7 +18,7 @@ router.get('/:id', getUser);
 
 router.patch(
   '/:id',
-  validate([
+  [
     body('role')
       .optional()
       .isIn(['USER', 'ADMIN', 'MANAGER'])
@@ -27,7 +27,8 @@ router.patch(
       .optional()
       .isBoolean()
       .withMessage('isActive must be a boolean'),
-  ]),
+    validate,
+  ],
   updateUser
 );
 

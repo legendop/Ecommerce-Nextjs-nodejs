@@ -18,7 +18,7 @@ export const authService = {
    * Send OTP to phone number
    */
   sendOtp: async (phone: string): Promise<OtpResponse> => {
-    const response = await apiClient.post<OtpResponse>('/auth/send-otp', { phone });
+    const response = await apiClient.post<OtpResponse>('/auth/send-otp', { identifier: phone, authType: 'PHONE' });
     return response.data.data as OtpResponse;
   },
 
@@ -26,7 +26,7 @@ export const authService = {
    * Verify OTP and login
    */
   verifyOtp: async (phone: string, otp: string): Promise<AuthResponse> => {
-    const response = await apiClient.post<AuthResponse>('/auth/verify-otp', { phone, otp });
+    const response = await apiClient.post<AuthResponse>('/auth/verify-otp', { identifier: phone, otp, authType: 'PHONE' });
     return response.data.data as AuthResponse;
   },
 
@@ -34,7 +34,7 @@ export const authService = {
    * Get current user
    */
   getMe: async (): Promise<User> => {
-    const response = await apiClient.get<User>('/auth/me');
+    const response = await apiClient.get<User>('/auth/profile');
     return response.data.data as User;
   },
 

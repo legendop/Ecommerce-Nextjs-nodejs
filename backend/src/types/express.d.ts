@@ -34,19 +34,18 @@ export interface ApiResponse<T = unknown> {
 
 export interface TokenPayload {
   userId: string;
-  phone: string;
   role: string;
   iat?: number;
   exp?: number;
 }
 
 export interface CartItemInput {
-  productId: bigint;
+  listingId: bigint;
   quantity: number;
 }
 
 export interface ValidatedCartItem {
-  itemId: bigint;
+  listingId: bigint;
   name: string;
   price: number;
   quantity: number;

@@ -30,6 +30,17 @@ export interface ProductItem {
   isActive: boolean;
 }
 
+export interface Listing {
+  id: string;
+  productId?: string;
+  skuCode?: string;
+  size?: string;
+  price: number;
+  discountAmount?: number;
+  stock: number;
+  isActive?: boolean;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -38,6 +49,7 @@ export interface Product {
   shortDesc?: string;
   shortDescription?: string;
   imageUrl?: string;
+  firstImage?: string;
   isActive: boolean;
   categories?: Array<{
     categoryId: string;
@@ -46,16 +58,20 @@ export interface Product {
     };
   }>;
   items?: ProductItem[];
+  listings?: Listing[];
   // Flattened fields for UI (from first item)
   price?: number;
   stock?: number;
+  totalStock?: number;
   sku?: string;
   categoryId?: string;
   category?: Category;
   images?: ProductImage[];
+  sizes?: string[];
   // UI helpers
   compareAtPrice?: number | null;
   comparePrice?: number | null;
+  listingId?: string;
 }
 
 export interface ProductImage {
@@ -66,6 +82,7 @@ export interface ProductImage {
 
 export interface CartItem {
   productId: string;
+  listingId?: string;
   name: string;
   price: number;
   quantity: number;

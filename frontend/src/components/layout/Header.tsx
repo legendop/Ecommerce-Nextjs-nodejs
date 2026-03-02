@@ -2,16 +2,20 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShoppingCartIcon, UserIcon, Bars3Icon, XMarkIcon, BuildingStorefrontIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { ShoppingCartIcon, UserIcon, Bars3Icon, XMarkIcon, BuildingStorefrontIcon, MagnifyingGlassIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useCart } from '@/hooks/useCart';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { categoriesApi } from '@/lib/api';
+import { Category } from '@/types';
 
 export function Header() {
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
   const { user, isAuthenticated, logout } = useAuth();
   const { totalItems } = useCart();
   const { config: siteConfig, initialize } = useSettingsStore();
@@ -24,12 +28,21 @@ export function Header() {
   useEffect(() => {
     setIsMounted(true);
     initialize();
+    fetchCategories();
   }, [initialize]);
+
+  const fetchCategories = async () => {
+    try {
+      const response = await categoriesApi.list();
+      setCategories(response.data.data || []);
+    } catch (error) {
+      // Silently fail - navigation will show default items
+    }
+  };
 
   const navigation = [
     { name: 'Home', href: '/' },
     { name: 'Shop All', href: '/products' },
-    { name: 'Categories', href: '/categories' },
   ];
 
   return (
@@ -86,6 +99,45 @@ export function Header() {
                   {item.name}
                 </Link>
               ))}
+              {/* Categories Dropdown */}
+              <div className="relative group">
+                <button
+                  className="flex items-center gap-1 text-brand-purple hover:text-brand-pink font-medium text-sm transition-colors"
+                  onMouseEnter={() => setCategoriesOpen(true)}
+                  onMouseLeave={() => setCategoriesOpen(false)}
+                >
+                  Categories
+                  <ChevronDownIcon className="h-4 w-4" />
+                </button>
+                <div
+                  className="absolute top-full left-0 w-64 bg-white rounded-lg shadow-lg py-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all border border-gray-100"
+                  onMouseEnter={() => setCategoriesOpen(true)}
+                  onMouseLeave={() => setCategoriesOpen(false)}
+                >
+                  {categories.length > 0 ? (
+                    categories.map((category) => (
+                      <Link
+                        key={category.id}
+                        href={`/products?category=${category.slug}`}
+                        className="block px-4 py-2 text-sm text-brand-purple hover:bg-brand-pink-light hover:text-brand-pink-dark"
+                      >
+                        {category.name}
+                      </Link>
+                    ))
+                  ) : (
+                    <span className="block px-4 py-2 text-sm text-gray-400">
+                      No categories
+                    </span>
+                  )}
+                  <hr className="my-1 border-gray-100" />
+                  <Link
+                    href="/categories"
+                    className="block px-4 py-2 text-sm text-brand-purple hover:bg-brand-pink-light font-medium"
+                  >
+                    View All Categories
+                  </Link>
+                </div>
+              </div>
             </div>
 
             {/* Right side icons */}
@@ -165,6 +217,30 @@ export function Header() {
                     {item.name}
                   </Link>
                 ))}
+                <div className="px-4 py-2 text-brand-purple font-medium">
+                  Categories
+                </div>
+                {categories.length > 0 ? (
+                  categories.map((category) => (
+                    <Link
+                      key={category.id}
+                      href={`/products?category=${category.slug}`}
+                      className="px-8 py-2 text-sm text-gray-600 hover:text-brand-pink hover:bg-brand-pink-light rounded-lg"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      {category.name}
+                    </Link>
+                  ))
+                ) : (
+                  <span className="px-8 py-2 text-sm text-gray-400">No categories</span>
+                )}
+                <Link
+                  href="/categories"
+                  className="px-8 py-2 text-sm text-brand-purple hover:text-brand-pink hover:bg-brand-pink-light rounded-lg font-medium"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  View All Categories
+                </Link>
               </div>
             </div>
           )}

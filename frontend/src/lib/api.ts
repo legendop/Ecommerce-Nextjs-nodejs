@@ -2,7 +2,7 @@ import axios, { AxiosError, AxiosResponse } from 'axios';
 import { ApiResponse } from '@/types';
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -40,9 +40,9 @@ api.interceptors.response.use(
 
 // Auth API
 export const authApi = {
-  sendOtp: (phone: string) => api.post('/auth/send-otp', { phone }),
-  verifyOtp: (phone: string, otp: string) => api.post('/auth/verify-otp', { phone, otp }),
-  getMe: () => api.get('/auth/me'),
+  sendOtp: (phone: string) => api.post('/auth/send-otp', { identifier: phone, authType: 'PHONE' }),
+  verifyOtp: (phone: string, otp: string) => api.post('/auth/verify-otp', { identifier: phone, otp, authType: 'PHONE' }),
+  getMe: () => api.get('/auth/profile'),
   logout: () => api.post('/auth/logout'),
   updateProfile: (data: { name?: string; email?: string }) =>
     api.patch('/auth/profile', data),
@@ -52,7 +52,7 @@ export const authApi = {
 export const productsApi = {
   list: (params?: { page?: number; limit?: number; category?: string; search?: string }) =>
     api.get('/products', { params }),
-  getBySlug: (slug: string) => api.get(`/products/${slug}`),
+  getBySlug: (slug: string) => api.get(`/products/details/${slug}`),
   adminList: (params?: { page?: number; limit?: number }) =>
     api.get('/products/admin/all', { params }),
   create: (data: unknown) => api.post('/products/admin', data),

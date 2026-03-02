@@ -2,29 +2,47 @@
 
 import { useCartStore } from '@/stores/cartStore';
 import { Product } from '@/types';
+import { useMemo } from 'react';
 
 export function useCart() {
-  const store = useCartStore();
+  // Subscribe to the store - this ensures re-renders when items change
+  const items = useCartStore((state) => state.items);
+  const addItem = useCartStore((state) => state.addItem);
+  const removeItem = useCartStore((state) => state.removeItem);
+  const updateQuantity = useCartStore((state) => state.updateQuantity);
+  const clearCart = useCartStore((state) => state.clearCart);
 
-  const addToCart = (product: Product, quantity = 1) => {
-    store.addItem({
+  const addToCart = (product: Product, quantity = 1, listing?: { id?: string; price?: number; stock?: number }) => {
+    addItem({
       productId: product.id,
+      listingId: product.listingId || listing?.id,
       name: product.name,
-      price: Number(product.price ?? 0),
+      price: Number(listing?.price ?? product.price ?? 0),
       quantity,
-      stock: product.stock ?? 0,
-      imageUrl: product.imageUrl,
+      stock: listing?.stock ?? product.stock ?? 0,
+      imageUrl: product.firstImage || product.images?.[0]?.imageUrl || product.imageUrl,
     });
   };
 
+  // Compute reactive values from items
+  const totalItems = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items]);
+  const subtotal = useMemo(() => items.reduce((sum, item) => sum + item.total, 0), [items]);
+  const itemsForValidation = useMemo(() =>
+    items.map((item) => ({
+      listingId: item.listingId || item.productId,
+      quantity: item.quantity,
+    })),
+    [items]
+  );
+
   return {
-    items: store.items,
+    items,
     addToCart,
-    removeItem: store.removeItem,
-    updateQuantity: store.updateQuantity,
-    clearCart: store.clearCart,
-    totalItems: store.getTotalItems(),
-    subtotal: store.getSubtotal(),
-    itemsForValidation: store.getItemsForValidation(),
+    removeItem,
+    updateQuantity,
+    clearCart,
+    totalItems,
+    subtotal,
+    itemsForValidation,
   };
 }

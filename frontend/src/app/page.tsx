@@ -83,7 +83,7 @@ export default async function HomePage() {
               {categories.map((category: Category) => (
                 <a
                   key={category.id}
-                  href={`/category/${category.slug}`}
+                  href={`/products?category=${category.slug}`}
                   className="group flex flex-col items-center gap-3 p-5 bg-brand-pink-light rounded-2xl hover:bg-brand-pink hover:shadow-lg transition-all"
                 >
                   <span className="text-4xl group-hover:scale-110 transition-transform">

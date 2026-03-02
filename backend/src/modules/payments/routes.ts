@@ -1,40 +1,41 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
 import {
-  createRazorpayOrder,
-  verifyRazorpayPayment,
-  razorpayWebhook,
+  createPayment,
+  verifyPayment,
+  getPaymentStatus,
+  paymentWebhook,
+  adminListPayments,
 } from './controller';
-import { authenticate } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
-import { paymentLimiter } from '../../middleware/rateLimiter';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
-// Create Razorpay order
+// ==========================================
+// USER ROUTES
+// ==========================================
 router.post(
-  '/razorpay/create',
+  '/create',
   authenticate,
-  paymentLimiter,
-  validate([
-    body('orderId').notEmpty().withMessage('Order ID is required'),
-  ]),
-  createRazorpayOrder
+  [
+    body('orderId').notEmpty().withMessage('Order ID required'),
+    body('provider').notEmpty().withMessage('Payment provider required'),
+  ],
+  validate,
+  createPayment
 );
 
-// Verify Razorpay payment
-router.post(
-  '/razorpay/verify',
-  paymentLimiter,
-  validate([
-    body('razorpay_order_id').notEmpty(),
-    body('razorpay_payment_id').notEmpty(),
-    body('razorpay_signature').notEmpty(),
-  ]),
-  verifyRazorpayPayment
-);
+router.post('/verify', authenticate, verifyPayment);
+router.get('/:id/status', authenticate, getPaymentStatus);
 
-// Razorpay webhook (no auth required)
-router.post('/razorpay/webhook', razorpayWebhook);
+// ==========================================
+// WEBHOOK ROUTES
+// ==========================================
+router.post('/webhook/:provider', paymentWebhook);
+
+// ==========================================
+// ADMIN ROUTES// ==========================================
+router.get('/admin/all', authenticate, requireManager, adminListPayments);
 
 export default router;

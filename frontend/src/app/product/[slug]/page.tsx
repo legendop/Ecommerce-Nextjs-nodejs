@@ -5,7 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1
 
 async function getProduct(slug: string) {
   try {
-    const res = await fetch(`${API_URL}/products/${slug}`, {
+    const res = await fetch(`${API_URL}/products/details/${slug}`, {
       cache: 'no-store',
     });
     if (!res.ok) return null;

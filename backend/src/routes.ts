@@ -1,26 +1,25 @@
 import { Router } from 'express';
-import { authenticate, requireAdmin } from './middleware';
+import { authenticate } from './middleware';
 
 // Public routes
 import authRoutes from './modules/auth/routes';
 import productRoutes from './modules/products/routes';
 import categoryRoutes from './modules/categories/routes';
+import listingRoutes from './modules/listings/routes';
 import cartRoutes from './modules/cart/routes';
 import reviewRoutes from './modules/reviews/routes';
+import shipmentRoutes from './modules/shipments/routes';
 import formRoutes from './modules/forms/routes';
+import analyticsRoutes from './modules/analytics/routes';
 
 // Protected user routes
 import addressRoutes from './modules/addresses/routes';
 import orderRoutes from './modules/orders/routes';
 import couponRoutes from './modules/coupons/routes';
 import deliveryRoutes from './modules/delivery/routes';
-import uploadRoutes from './modules/uploads/routes';
 import paymentRoutes from './modules/payments/routes';
-import analyticsRoutes from './modules/analytics/routes';
 import settingsRoutes from './modules/settings/routes';
-
-// Admin panel
-import adminPanelRoutes from './admin_panel';
+import userRoutes from './modules/users/routes';
 
 const router = Router();
 
@@ -44,7 +43,9 @@ router.use('/auth', authRoutes);
 // Public product browsing
 router.use('/products', productRoutes);
 router.use('/categories', categoryRoutes);
+router.use('/listings', listingRoutes);
 router.use('/reviews', reviewRoutes);
+router.use('/shipments', shipmentRoutes);
 router.use('/forms', formRoutes);
 
 // Cart (can work with or without auth)
@@ -52,8 +53,10 @@ router.use('/cart', cartRoutes);
 
 // Delivery check
 router.use('/delivery', deliveryRoutes);
-router.use('/analytics', analyticsRoutes);
 router.use('/settings', settingsRoutes);
+
+// Analytics (public visit tracking + protected admin routes)
+router.use('/analytics', analyticsRoutes);
 
 // ==========================================
 // PROTECTED USER ROUTES (Authentication required)
@@ -62,13 +65,7 @@ router.use('/settings', settingsRoutes);
 router.use('/addresses', authenticate, addressRoutes);
 router.use('/orders', authenticate, orderRoutes);
 router.use('/coupons', authenticate, couponRoutes);
-router.use('/uploads', authenticate, uploadRoutes);
 router.use('/payments', paymentRoutes);
-
-// ==========================================
-// ADMIN PANEL ROUTES
-// ==========================================
-
-router.use('/admin', authenticate, requireAdmin, adminPanelRoutes);
+router.use('/users', userRoutes);
 
 export default router;

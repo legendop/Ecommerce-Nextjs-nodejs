@@ -35,7 +35,7 @@ export default function CartPage() {
         {/* Cart Items */}
         <div className="lg:col-span-8 space-y-4">
           {items.map((item) => (
-            <div key={item.productId} className="flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+            <div key={item.listingId || item.productId} className="flex items-center gap-4 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
               <div className="relative w-20 h-20 bg-brand-pink-light rounded-xl overflow-hidden shrink-0">
                 {item.imageUrl ? (
                   <Image src={item.imageUrl} alt={item.name} fill className="object-cover" />
@@ -51,14 +51,14 @@ export default function CartPage() {
 
               <div className="flex items-center gap-1 border border-gray-200 rounded-full px-1">
                 <button
-                  onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                  onClick={() => updateQuantity(item.productId, item.quantity - 1, item.listingId)}
                   className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-brand-pink-light text-brand-purple font-bold"
                 >
                   −
                 </button>
                 <span className="w-7 text-center text-sm font-semibold text-brand-purple">{item.quantity}</span>
                 <button
-                  onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                  onClick={() => updateQuantity(item.productId, item.quantity + 1, item.listingId)}
                   disabled={item.quantity >= item.stock}
                   className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-brand-pink-light text-brand-purple font-bold disabled:opacity-30"
                 >
@@ -71,7 +71,7 @@ export default function CartPage() {
               </div>
 
               <button
-                onClick={() => removeItem(item.productId)}
+                onClick={() => removeItem(item.productId, item.listingId)}
                 className="p-2 text-gray-300 hover:text-red-400 transition-colors"
               >
                 <TrashIcon className="w-5 h-5" />

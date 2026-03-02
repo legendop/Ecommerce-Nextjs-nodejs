@@ -3,58 +3,62 @@ import { body } from 'express-validator';
 import {
   getForm,
   submitForm,
-  listForms,
+  adminListForms,
+  adminGetForm,
   createForm,
   updateForm,
   deleteForm,
   addFormField,
-  updateFormField,
   deleteFormField,
-  getFormSubmissions,
 } from './controller';
-import { authenticate, requireAdmin, optionalAuth } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
-// Public routes
+// ==========================================
+// PUBLIC ROUTES
+// ==========================================
 router.get('/:slug', getForm);
-router.post('/:slug/submit', optionalAuth, submitForm);
+router.post('/:slug/submit', submitForm);
 
-// Admin routes
-router.use('/admin', authenticate, requireAdmin);
-
-router.get('/admin/forms', listForms);
+// ==========================================
+// ADMIN ROUTES
+// ==========================================
+router.get('/admin/all', authenticate, requireManager, adminListForms);
+router.get('/admin/:id', authenticate, requireManager, adminGetForm);
 
 router.post(
-  '/admin/forms',
-  validate([
+  '/admin',
+  authenticate,
+  requireManager,
+  [
     body('name').trim().notEmpty().withMessage('Name is required'),
     body('slug').trim().notEmpty().withMessage('Slug is required'),
-  ]),
+  ],
+  validate,
   createForm
 );
 
-router.patch('/admin/forms/:id', updateForm);
-router.delete('/admin/forms/:id', deleteForm);
+router.patch('/admin/:id', authenticate, requireManager, updateForm);
+router.delete('/admin/:id', authenticate, requireManager, deleteForm);
 
 // Form fields
 router.post(
-  '/admin/forms/:id/fields',
-  validate([
+  '/admin/:formId/fields',
+  authenticate,
+  requireManager,
+  [
     body('label').trim().notEmpty().withMessage('Label is required'),
     body('fieldKey').trim().notEmpty().withMessage('Field key is required'),
     body('fieldType')
       .isIn(['TEXT', 'EMAIL', 'PHONE', 'NUMBER', 'TEXTAREA', 'SELECT', 'RADIO', 'CHECKBOX', 'DATE', 'FILE', 'HIDDEN'])
       .withMessage('Invalid field type'),
-  ]),
+  ],
+  validate,
   addFormField
 );
 
-router.patch('/admin/fields/:fieldId', updateFormField);
-router.delete('/admin/fields/:fieldId', deleteFormField);
-
-// Form submissions
-router.get('/admin/forms/:id/submissions', getFormSubmissions);
+router.delete('/admin/fields/:id', authenticate, requireManager, deleteFormField);
 
 export default router;

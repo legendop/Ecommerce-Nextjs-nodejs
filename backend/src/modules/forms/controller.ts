@@ -4,7 +4,9 @@ import { successResponse, errorResponse, paginatedResponse, createPaginationMeta
 import { getPaginationParams } from '../../utils/pagination';
 import logger from '../../utils/logger';
 
-// Get form by slug (public)
+// ==========================================
+// PUBLIC API - Get form by slug
+// ==========================================
 export const getForm = async (req: Request, res: Response): Promise<void> => {
   try {
     const { slug } = req.params;
@@ -13,20 +15,7 @@ export const getForm = async (req: Request, res: Response): Promise<void> => {
       where: { slug },
       include: {
         fields: {
-          where: { isRequired: true },
           orderBy: { sortOrder: 'asc' },
-          select: {
-            id: true,
-            label: true,
-            fieldKey: true,
-            fieldType: true,
-            isRequired: true,
-            placeholder: true,
-            helpText: true,
-            options: true,
-            defaultValue: true,
-            validation: true,
-          },
         },
       },
     });
@@ -43,17 +32,16 @@ export const getForm = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// Submit form (public)
+// ==========================================
+// PUBLIC API - Submit form
+// ==========================================
 export const submitForm = async (req: Request, res: Response): Promise<void> => {
   try {
     const { slug } = req.params;
-    const data = req.body;
+    const { data } = req.body;
 
     const form = await prisma.form.findUnique({
       where: { slug },
-      include: {
-        fields: true,
-      },
     });
 
     if (!form || !form.isActive) {
@@ -61,61 +49,100 @@ export const submitForm = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Validate required fields
-    for (const field of form.fields) {
-      if (field.isRequired && !data[field.fieldKey]) {
-        errorResponse(res, `${field.label} is required`, 400);
-        return;
-      }
-    }
-
     const submission = await prisma.formSubmission.create({
       data: {
         formId: form.id,
         userId: req.user?.id,
         data,
-        ipAddress: req.ip || undefined,
-        userAgent: req.get('user-agent') || undefined,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
       },
     });
 
-    successResponse(res, submission, form.successMessage || 'Form submitted successfully');
+    successResponse(res, submission, 'Form submitted successfully', 201);
   } catch (error) {
     logger.error('Submit form error:', error);
     errorResponse(res, 'Failed to submit form', 500, error);
   }
 };
 
-// Admin: List forms
-export const listForms = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// ADMIN API - List forms
+// ==========================================
+export const adminListForms = async (req: Request, res: Response): Promise<void> => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
 
     const total = await prisma.form.count();
 
     const forms = await prisma.form.findMany({
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
       include: {
         _count: {
           select: { submissions: true },
         },
       },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
     });
 
     paginatedResponse(res, forms, createPaginationMeta(page, limit, total));
   } catch (error) {
-    logger.error('List forms error:', error);
+    logger.error('Admin list forms error:', error);
     errorResponse(res, 'Failed to fetch forms', 500, error);
   }
 };
 
-// Admin: Create form
+// ==========================================
+// ADMIN API - Get form with submissions
+// ==========================================
+export const adminGetForm = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const form = await prisma.form.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        fields: {
+          orderBy: { sortOrder: 'asc' },
+        },
+        submissions: {
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        },
+        _count: {
+          select: { submissions: true },
+        },
+      },
+    });
+
+    if (!form) {
+      errorResponse(res, 'Form not found', 404);
+      return;
+    }
+
+    successResponse(res, form);
+  } catch (error) {
+    logger.error('Admin get form error:', error);
+    errorResponse(res, 'Failed to fetch form', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - Create form
+// ==========================================
 export const createForm = async (req: Request, res: Response): Promise<void> => {
   try {
+    const { name, slug, description, submitText, successMessage } = req.body;
+
     const form = await prisma.form.create({
-      data: req.body,
+      data: {
+        name,
+        slug,
+        description,
+        submitText,
+        successMessage,
+      },
     });
 
     successResponse(res, form, 'Form created successfully', 201);
@@ -125,14 +152,23 @@ export const createForm = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-// Admin: Update form
+// ==========================================
+// ADMIN API - Update form
+// ==========================================
 export const updateForm = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+    const { name, description, isActive, submitText, successMessage } = req.body;
 
     const form = await prisma.form.update({
       where: { id: BigInt(id) },
-      data: req.body,
+      data: {
+        name,
+        description,
+        isActive,
+        submitText,
+        successMessage,
+      },
     });
 
     successResponse(res, form, 'Form updated successfully');
@@ -142,7 +178,9 @@ export const updateForm = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-// Admin: Delete form
+// ==========================================
+// ADMIN API - Delete form
+// ==========================================
 export const deleteForm = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -158,15 +196,23 @@ export const deleteForm = async (req: Request, res: Response): Promise<void> => 
   }
 };
 
-// Admin: Add form field
+// ==========================================
+// ADMIN API - Add form field
+// ==========================================
 export const addFormField = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { formId } = req.params;
+    const { label, fieldKey, fieldType, isRequired, options, sortOrder } = req.body;
 
     const field = await prisma.formField.create({
       data: {
-        ...req.body,
-        formId: BigInt(id),
+        formId: BigInt(formId),
+        label,
+        fieldKey,
+        fieldType,
+        isRequired: isRequired ?? false,
+        options,
+        sortOrder: sortOrder || 0,
       },
     });
 
@@ -177,68 +223,20 @@ export const addFormField = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Admin: Update form field
-export const updateFormField = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { fieldId } = req.params;
-
-    const field = await prisma.formField.update({
-      where: { id: BigInt(fieldId) },
-      data: req.body,
-    });
-
-    successResponse(res, field, 'Field updated successfully');
-  } catch (error) {
-    logger.error('Update form field error:', error);
-    errorResponse(res, 'Failed to update field', 500, error);
-  }
-};
-
-// Admin: Delete form field
+// ==========================================
+// ADMIN API - Delete form field
+// ==========================================
 export const deleteFormField = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { fieldId } = req.params;
+    const { id } = req.params;
 
     await prisma.formField.delete({
-      where: { id: BigInt(fieldId) },
+      where: { id: BigInt(id) },
     });
 
     successResponse(res, null, 'Field deleted successfully');
   } catch (error) {
     logger.error('Delete form field error:', error);
     errorResponse(res, 'Failed to delete field', 500, error);
-  }
-};
-
-// Admin: Get form submissions
-export const getFormSubmissions = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const { page, limit, skip } = getPaginationParams(req);
-
-    const total = await prisma.formSubmission.count({
-      where: { formId: BigInt(id) },
-    });
-
-    const submissions = await prisma.formSubmission.findMany({
-      where: { formId: BigInt(id) },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-
-    paginatedResponse(res, submissions, createPaginationMeta(page, limit, total));
-  } catch (error) {
-    logger.error('Get form submissions error:', error);
-    errorResponse(res, 'Failed to fetch submissions', 500, error);
   }
 };

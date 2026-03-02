@@ -56,7 +56,7 @@ export default async function CategoriesPage() {
             {categories.map((category: Category) => (
               <Link
                 key={category.id}
-                href={`/category/${category.slug}`}
+                href={`/products?category=${category.slug}`}
                 className="group block bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all p-8 text-center"
               >
                 <span className="text-6xl mb-4 block group-hover:scale-110 transition-transform">

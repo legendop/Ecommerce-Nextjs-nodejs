@@ -24,9 +24,7 @@ export const listUsers = async (req: Request, res: Response): Promise<void> => {
 
     if (search) {
       where.OR = [
-        { phone: { contains: search as string } },
         { name: { contains: search as string, mode: 'insensitive' } },
-        { email: { contains: search as string, mode: 'insensitive' } },
       ];
     }
 
@@ -36,13 +34,11 @@ export const listUsers = async (req: Request, res: Response): Promise<void> => {
       where,
       select: {
         id: true,
-        phone: true,
         name: true,
-        email: true,
         role: true,
         isActive: true,
-        lastLoginAt: true,
         createdAt: true,
+        updatedAt: true,
         _count: {
           select: {
             orders: true,
@@ -78,7 +74,7 @@ export const getUser = async (req: Request, res: Response): Promise<void> => {
             id: true,
             orderNumber: true,
             totalAmount: true,
-            status: true,
+            orderStatus: true,
             createdAt: true,
           },
         },
@@ -107,11 +103,11 @@ export const getUser = async (req: Request, res: Response): Promise<void> => {
 export const updateUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, email, role, isActive } = req.body;
+    const { name, role, isActive } = req.body;
 
     const user = await prisma.user.update({
       where: { id: BigInt(id) },
-      data: { name, email, role, isActive },
+      data: { name, role, isActive },
     });
 
     successResponse(res, user, 'User updated successfully');

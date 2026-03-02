@@ -1,60 +1,50 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
 import {
-  createOrder,
   getMyOrders,
   getOrder,
+  createOrder,
   adminListOrders,
   adminGetOrder,
   updateOrderStatus,
+  cancelOrder,
 } from './controller';
-import { authenticate, requireManager } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
-// User routes
-router.use(authenticate);
-
+// ==========================================
+// USER ROUTES
+// ==========================================
+router.get('/my', authenticate, getMyOrders);
+router.get('/:id', authenticate, getOrder);
 router.post(
   '/',
-  validate([
-    body('addressId').notEmpty().withMessage('Address is required'),
-    body('items')
-      .isArray({ min: 1 })
-      .withMessage('At least one item is required'),
-    body('paymentMethod')
-      .isIn(['COD', 'RAZORPAY', 'UPI', 'CARD'])
-      .withMessage('Invalid payment method'),
-  ]),
+  authenticate,
+  [
+    body('items').isArray().withMessage('Items must be an array'),
+    body('items.*.listingId').notEmpty().withMessage('Listing ID required'),
+    body('items.*.quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
+    body('addressSnapshot').isObject().withMessage('Address snapshot required'),
+  ],
+  validate,
   createOrder
 );
 
-router.get('/', getMyOrders);
-router.get('/:orderNumber', getOrder);
-
-// Admin routes
-router.get('/admin/all', requireManager, adminListOrders);
-router.get('/admin/:id', requireManager, adminGetOrder);
-
+// ==========================================
+// ADMIN ROUTES
+// ==========================================
+router.get('/admin/all', authenticate, requireManager, adminListOrders);
+router.get('/admin/:id', authenticate, requireManager, adminGetOrder);
 router.patch(
   '/admin/:id/status',
+  authenticate,
   requireManager,
-  validate([
-    body('status')
-      .isIn([
-        'PLACED',
-        'CONFIRMED',
-        'PROCESSING',
-        'SHIPPED',
-        'OUT_FOR_DELIVERY',
-        'DELIVERED',
-        'CANCELLED',
-        'RETURNED',
-      ])
-      .withMessage('Invalid status'),
-  ]),
+  [body('orderStatus').notEmpty().withMessage('Order status required')],
+  validate,
   updateOrderStatus
 );
+router.patch('/admin/:id/cancel', authenticate, requireManager, cancelOrder);
 
 export default router;

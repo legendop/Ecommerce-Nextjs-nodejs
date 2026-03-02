@@ -1,27 +1,30 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../config/prisma';
 import { successResponse, errorResponse, paginatedResponse, createPaginationMeta } from '../../utils/response';
-import { getPaginationParams, getSortParams } from '../../utils/pagination';
+import { getPaginationParams } from '../../utils/pagination';
 import logger from '../../utils/logger';
 
-// List all products (public)
+// ==========================================
+// PUBLIC API - List products with filters
+// ==========================================
 export const listProducts = async (req: Request, res: Response): Promise<void> => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
-    const { field, order } = getSortParams(req, ['name', 'createdAt'], 'createdAt');
-    const { category, min, max, search } = req.query;
+    const { category, search, minPrice, maxPrice, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
 
-    // Build where clause for catalog
     const where: Record<string, unknown> = {
       isActive: true,
     };
 
-    // Category filter - filter by category relation
+    // Category filter
     if (category) {
       where.categories = {
         some: {
           category: {
-            slug: category,
+            OR: [
+              { slug: category as string },
+              { id: !isNaN(Number(category)) ? BigInt(category as string) : undefined },
+            ],
           },
         },
       };
@@ -35,69 +38,70 @@ export const listProducts = async (req: Request, res: Response): Promise<void> =
       ];
     }
 
-    // Get total count
-    const total = await prisma.catalog.count({ where });
+    const total = await prisma.product.count({ where });
 
-    // Get products with items for price/stock
-    const catalogs = await prisma.catalog.findMany({
+    const products = await prisma.product.findMany({
       where,
+      orderBy: { [sortBy as string]: sortOrder },
+      skip,
+      take: limit,
       include: {
+        images: {
+          orderBy: { sortOrder: 'asc' },
+          take: 1,
+        },
+        listings: {
+          where: { isActive: true },
+          orderBy: { price: 'asc' },
+        },
         categories: {
           include: {
             category: {
-              select: { name: true, slug: true },
+              select: { id: true, name: true, slug: true },
             },
           },
         },
-        items: {
-          where: { isActive: true },
-          orderBy: { price: 'asc' },
-          take: 1, // Get first item for display price
-        },
         _count: {
-          select: { items: true },
+          select: { listings: true, reviews: true },
         },
       },
-      orderBy: { [field]: order },
-      skip,
-      take: limit,
     });
 
-    // Map to product response format
-    const products = catalogs.map((catalog) => {
-      const firstItem = catalog.items[0];
-      const totalStock = catalog.items.reduce((sum, item) => sum + item.stock, 0);
+    // Calculate min/max price and total stock
+    const formattedProducts = products.map((product) => {
+      const activeListings = product.listings.filter((l) => l.stock > 0);
+      const minPriceListing = activeListings.length > 0
+        ? activeListings.reduce((min, l) => (l.price < min.price ? l : min), activeListings[0])
+        : product.listings[0];
+
+      const totalStock = product.listings.reduce((sum, l) => sum + l.stock, 0);
 
       return {
-        id: catalog.id,
-        name: catalog.name,
-        slug: catalog.slug,
-        shortDesc: catalog.shortDesc,
-        imageUrl: catalog.imageUrl,
-        isActive: catalog.isActive,
-        createdAt: catalog.createdAt,
-        // From first item
-        price: firstItem?.price || 0,
-        comparePrice: firstItem?.discount
-          ? Number(firstItem.price) + Number(firstItem.discount)
-          : null,
-        stock: totalStock,
-        sku: firstItem?.skuCode,
-        // Category info
-        category: catalog.categories[0]?.category,
-        categoryId: catalog.categories[0]?.categoryId,
-        // Variant count
-        variantCount: catalog._count.items,
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        colorName: product.colorName,
+        colorCode: product.colorCode,
+        gender: product.gender,
+        firstImage: product.images[0]?.imageUrl || null,
+        price: minPriceListing?.price || null,
+        discountAmount: minPriceListing?.discountAmount || null,
+        totalStock,
+        sizes: product.listings.map((l) => l.size).filter(Boolean),
+        categories: product.categories.map((c) => c.category),
+        listingCount: product._count.listings,
+        reviewCount: product._count.reviews,
       };
     });
 
-    // Filter by price range in memory (since price is on items)
-    let filteredProducts = products;
-    if (min || max) {
-      filteredProducts = products.filter((p) => {
+    // Filter by price range
+    let filteredProducts = formattedProducts;
+    if (minPrice || maxPrice) {
+      filteredProducts = formattedProducts.filter((p) => {
+        if (!p.price) return false;
         const price = Number(p.price);
-        if (min && price < parseFloat(min as string)) return false;
-        if (max && price > parseFloat(max as string)) return false;
+        if (minPrice && price < parseFloat(minPrice as string)) return false;
+        if (maxPrice && price > parseFloat(maxPrice as string)) return false;
         return true;
       });
     }
@@ -109,14 +113,23 @@ export const listProducts = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-// Get single product
-export const getProduct = async (req: Request, res: Response): Promise<void> => {
+// ==========================================
+// PUBLIC API - Get product details (for product page)
+// ==========================================
+export const getProductDetails = async (req: Request, res: Response): Promise<void> => {
   try {
     const { slug } = req.params;
 
-    const catalog = await prisma.catalog.findUnique({
+    const product = await prisma.product.findUnique({
       where: { slug },
       include: {
+        images: {
+          orderBy: { sortOrder: 'asc' },
+        },
+        listings: {
+          where: { isActive: true },
+          orderBy: { size: 'asc' },
+        },
         categories: {
           include: {
             category: {
@@ -124,106 +137,361 @@ export const getProduct = async (req: Request, res: Response): Promise<void> => 
             },
           },
         },
-        items: {
-          where: { isActive: true },
+        reviews: {
+          where: { isVerified: true },
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            user: {
+              select: { name: true },
+            },
+          },
         },
-        images: {
-          orderBy: { sortOrder: 'asc' },
+        _count: {
+          select: { reviews: true },
         },
       },
     });
 
-    if (!catalog || !catalog.isActive) {
+    if (!product || !product.isActive) {
       errorResponse(res, 'Product not found', 404);
       return;
     }
 
-    const totalStock = catalog.items.reduce((sum, item) => sum + item.stock, 0);
-    const firstItem = catalog.items[0];
+    // Calculate average rating
+    const reviews = await prisma.review.aggregate({
+      where: { productId: product.id },
+      _avg: { rating: true },
+    });
 
-    const product = {
-      id: catalog.id,
-      name: catalog.name,
-      slug: catalog.slug,
-      description: catalog.description,
-      shortDesc: catalog.shortDesc,
-      bullets: catalog.bullets,
-      extraData: catalog.extraData,
-      imageUrl: catalog.imageUrl,
-      isActive: catalog.isActive,
-      createdAt: catalog.createdAt,
-      // Aggregated from items
-      price: firstItem?.price || 0,
-      stock: totalStock,
-      items: catalog.items,
-      // Category
-      category: catalog.categories[0]?.category,
-      categoryId: catalog.categories[0]?.categoryId,
-      // Images
-      images: catalog.images,
+    const response = {
+      ...product,
+      averageRating: reviews._avg.rating || 0,
+      totalReviews: product._count.reviews,
+      categories: product.categories.map((c) => c.category),
     };
+
+    successResponse(res, response);
+  } catch (error) {
+    logger.error('Get product details error:', error);
+    errorResponse(res, 'Failed to fetch product details', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - List all products with full details
+// ==========================================
+export const adminListProducts = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { page, limit, skip } = getPaginationParams(req);
+    const { search, categoryId, isActive } = req.query;
+
+    const where: Record<string, unknown> = {};
+
+    if (search) {
+      where.name = { contains: search as string, mode: 'insensitive' };
+    }
+
+    if (isActive !== undefined) {
+      where.isActive = isActive === 'true';
+    }
+
+    if (categoryId) {
+      where.categories = {
+        some: { categoryId: BigInt(categoryId as string) },
+      };
+    }
+
+    const total = await prisma.product.count({ where });
+
+    const products = await prisma.product.findMany({
+      where,
+      orderBy: { sortOrder: 'asc' },
+      skip,
+      take: limit,
+      include: {
+        images: {
+          orderBy: { sortOrder: 'asc' },
+          take: 1,
+        },
+        listings: {
+          orderBy: { size: 'asc' },
+        },
+        categories: {
+          include: {
+            category: {
+              select: { id: true, name: true, slug: true },
+            },
+          },
+        },
+        _count: {
+          select: { listings: true, reviews: true },
+        },
+      },
+    });
+
+    paginatedResponse(res, products, createPaginationMeta(page, limit, total));
+  } catch (error) {
+    logger.error('Admin list products error:', error);
+    errorResponse(res, 'Failed to fetch products', 500, error);
+  }
+};
+
+// ==========================================
+// ADMIN API - Get single product with all details
+// ==========================================
+export const adminGetProduct = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.product.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        images: {
+          orderBy: { sortOrder: 'asc' },
+        },
+        listings: {
+          orderBy: { size: 'asc' },
+        },
+        categories: {
+          include: {
+            category: {
+              select: { id: true, name: true, slug: true },
+            },
+          },
+        },
+        reviews: {
+          include: {
+            user: {
+              select: { id: true, name: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        _count: {
+          select: { listings: true, reviews: true },
+        },
+      },
+    });
+
+    if (!product) {
+      errorResponse(res, 'Product not found', 404);
+      return;
+    }
 
     successResponse(res, product);
   } catch (error) {
-    logger.error('Get product error:', error);
+    logger.error('Admin get product error:', error);
     errorResponse(res, 'Failed to fetch product', 500, error);
   }
 };
 
-// Admin: Create product
+// ==========================================
+// ADMIN API - Create product with listings and images
+// ==========================================
 export const createProduct = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, slug, description, shortDescription, price, stock, imageUrl, isActive, categoryId } = req.body;
+    const {
+      name,
+      slug,
+      description,
+      bulletPoints,
+      extraData,
+      colorName,
+      colorCode,
+      gender,
+      categoryIds,
+      images,
+      listings,
+      isActive,
+      sortOrder,
+    } = req.body;
 
-    // Create catalog with default item
-    const catalog = await prisma.catalog.create({
-      data: {
-        name,
-        slug,
-        description,
-        shortDesc: shortDescription,
-        imageUrl,
-        isActive: isActive ?? true,
-        categories: categoryId ? {
-          create: { categoryId: BigInt(categoryId) }
-        } : undefined,
-        items: {
-          create: {
-            skuCode: slug.toUpperCase(),
-            price: parseFloat(price),
-            stock: parseInt(stock) || 0,
-            isActive: true,
-          }
-        }
-      },
-      include: {
-        items: true,
-        categories: {
-          include: { category: { select: { name: true } } }
-        }
-      },
+    const product = await prisma.$transaction(async (tx) => {
+      const newProduct = await tx.product.create({
+        data: {
+          name,
+          slug,
+          description,
+          colorName,
+          colorCode,
+          gender,
+          bulletPoints: bulletPoints || [],
+          extraData: extraData || {},
+          isActive: isActive ?? true,
+          sortOrder: sortOrder || 0,
+          categories: categoryIds?.length > 0 ? {
+            create: categoryIds.map((id: string) => ({ categoryId: BigInt(id) })),
+          } : undefined,
+          images: images?.length > 0 ? {
+            create: images.map((img: { imageUrl: string; sortOrder?: number }, idx: number) => ({
+              imageUrl: img.imageUrl,
+              sortOrder: img.sortOrder ?? idx,
+            })),
+          } : undefined,
+          listings: listings?.length > 0 ? {
+            create: listings.map((listing: {
+              skuCode?: string;
+              size?: string;
+              price: number;
+              discountAmount?: number;
+              stock?: number;
+              isActive?: boolean;
+            }) => ({
+              skuCode: listing.skuCode,
+              size: listing.size,
+              price: listing.price,
+              discountAmount: listing.discountAmount || 0,
+              stock: listing.stock || 0,
+              isActive: listing.isActive ?? true,
+            })),
+          } : undefined,
+        },
+        include: {
+          images: true,
+          listings: true,
+          categories: {
+            include: {
+              category: {
+                select: { id: true, name: true, slug: true },
+              },
+            },
+          },
+        },
+      });
+
+      return newProduct;
     });
 
-    successResponse(res, catalog, 'Product created successfully', 201);
+    successResponse(res, product, 'Product created successfully', 201);
   } catch (error) {
     logger.error('Create product error:', error);
     errorResponse(res, 'Failed to create product', 500, error);
   }
 };
 
-// Admin: Update product
+// ==========================================
+// ADMIN API - Update product with listings and images
+// ==========================================
 export const updateProduct = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+    const {
+      name,
+      slug,
+      description,
+      bulletPoints,
+      extraData,
+      colorName,
+      colorCode,
+      gender,
+      categoryIds,
+      images,
+      listings,
+      isActive,
+      sortOrder,
+    } = req.body;
 
-    const product = await prisma.catalog.update({
-      where: { id: BigInt(id) },
-      data: req.body,
-      include: {
-        categories: {
-          include: { category: { select: { name: true } } }
+    const product = await prisma.$transaction(async (tx) => {
+      // Update basic product info
+      await tx.product.update({
+        where: { id: BigInt(id) },
+        data: {
+          name,
+          slug,
+          description,
+          colorName,
+          colorCode,
+          gender,
+          bulletPoints,
+          extraData,
+          isActive,
+          sortOrder,
         },
-      },
+      });
+
+      // Update categories if provided
+      if (categoryIds !== undefined) {
+        await tx.productCategory.deleteMany({ where: { productId: BigInt(id) } });
+        if (categoryIds.length > 0) {
+          await tx.productCategory.createMany({
+            data: categoryIds.map((catId: string) => ({
+              productId: BigInt(id),
+              categoryId: BigInt(catId),
+            })),
+          });
+        }
+      }
+
+      // Update images if provided
+      if (images !== undefined) {
+        await tx.productImage.deleteMany({ where: { productId: BigInt(id) } });
+        if (images.length > 0) {
+          await tx.productImage.createMany({
+            data: images.map((img: { imageUrl: string; sortOrder?: number }, idx: number) => ({
+              productId: BigInt(id),
+              imageUrl: img.imageUrl,
+              sortOrder: img.sortOrder ?? idx,
+            })),
+          });
+        }
+      }
+
+      // Update listings if provided
+      if (listings !== undefined) {
+        const existingListings = await tx.listing.findMany({
+          where: { productId: BigInt(id) },
+          select: { id: true },
+        });
+        const existingIds = existingListings.map((l) => l.id.toString());
+        const incomingIds = listings.filter((l: { id?: string }) => l.id).map((l: { id: string }) => l.id);
+
+        const toDelete = existingIds.filter((lid) => !incomingIds.includes(lid));
+        for (const delId of toDelete) {
+          await tx.listing.delete({ where: { id: BigInt(delId) } });
+        }
+
+        for (const listing of listings) {
+          if (listing.id) {
+            await tx.listing.update({
+              where: { id: BigInt(listing.id) },
+              data: {
+                skuCode: listing.skuCode,
+                size: listing.size,
+                price: listing.price,
+                discountAmount: listing.discountAmount,
+                stock: listing.stock,
+                isActive: listing.isActive,
+              },
+            });
+          } else {
+            await tx.listing.create({
+              data: {
+                productId: BigInt(id),
+                skuCode: listing.skuCode,
+                size: listing.size,
+                price: listing.price,
+                discountAmount: listing.discountAmount || 0,
+                stock: listing.stock || 0,
+                isActive: listing.isActive ?? true,
+              },
+            });
+          }
+        }
+      }
+
+      return tx.product.findUnique({
+        where: { id: BigInt(id) },
+        include: {
+          images: { orderBy: { sortOrder: 'asc' } },
+          listings: { orderBy: { size: 'asc' } },
+          categories: {
+            include: {
+              category: { select: { id: true, name: true, slug: true } },
+            },
+          },
+        },
+      });
     });
 
     successResponse(res, product, 'Product updated successfully');
@@ -233,12 +501,14 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Admin: Delete product (soft delete)
+// ==========================================
+// ADMIN API - Delete product (soft delete)
+// ==========================================
 export const deleteProduct = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 
-    await prisma.catalog.update({
+    await prisma.product.update({
       where: { id: BigInt(id) },
       data: { isActive: false },
     });
@@ -250,252 +520,31 @@ export const deleteProduct = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-// Admin: List all products (including inactive)
-export const adminListProducts = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { page, limit, skip } = getPaginationParams(req);
-    const search = req.query.search as string;
-
-    const where: Record<string, unknown> = {};
-
-    if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
-    }
-
-    const total = await prisma.catalog.count({ where });
-
-    const catalogs = await prisma.catalog.findMany({
-      where,
-      include: {
-        categories: {
-          include: {
-            category: {
-              select: { name: true },
-            },
-          },
-        },
-        items: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-
-    // Map to frontend-friendly format
-    const products = catalogs.map((catalog) => {
-      const firstItem = catalog.items[0];
-      const totalStock = catalog.items.reduce((sum, item) => sum + item.stock, 0);
-
-      return {
-        id: catalog.id,
-        name: catalog.name,
-        slug: catalog.slug,
-        description: catalog.description,
-        shortDesc: catalog.shortDesc,
-        imageUrl: catalog.imageUrl,
-        isActive: catalog.isActive,
-        createdAt: catalog.createdAt,
-        // From first item
-        price: firstItem?.price || 0,
-        stock: totalStock,
-        sku: firstItem?.skuCode,
-        items: catalog.items,
-        // Category info
-        categories: catalog.categories,
-        categoryId: catalog.categories[0]?.categoryId,
-      };
-    });
-
-    paginatedResponse(res, products, createPaginationMeta(page, limit, total));
-  } catch (error) {
-    logger.error('Admin list products error:', error);
-    errorResponse(res, 'Failed to fetch products', 500, error);
-  }
-};
-
-// Admin: Toggle product status
+// ==========================================
+// ADMIN API - Toggle product status
+// ==========================================
 export const toggleProductStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 
-    const catalog = await prisma.catalog.findUnique({
+    const product = await prisma.product.findUnique({
       where: { id: BigInt(id) },
       select: { isActive: true },
     });
 
-    if (!catalog) {
+    if (!product) {
       errorResponse(res, 'Product not found', 404);
       return;
     }
 
-    const updated = await prisma.catalog.update({
+    const updated = await prisma.product.update({
       where: { id: BigInt(id) },
-      data: { isActive: !catalog.isActive },
+      data: { isActive: !product.isActive },
     });
 
     successResponse(res, updated, `Product ${updated.isActive ? 'activated' : 'deactivated'} successfully`);
   } catch (error) {
     logger.error('Toggle product status error:', error);
     errorResponse(res, 'Failed to toggle product status', 500, error);
-  }
-};
-
-// ==========================================
-// CATALOG MANAGEMENT
-// ==========================================
-
-// List all catalogs (admin)
-export const listCatalogs = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { page, limit, skip } = getPaginationParams(req);
-    const search = req.query.search as string;
-
-    const where: Record<string, unknown> = {};
-
-    if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
-    }
-
-    const total = await prisma.catalog.count({ where });
-
-    const catalogs = await prisma.catalog.findMany({
-      where,
-      include: {
-        categories: {
-          include: {
-            category: {
-              select: { name: true, slug: true },
-            },
-          },
-        },
-        _count: {
-          select: { items: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
-
-    paginatedResponse(res, catalogs, createPaginationMeta(page, limit, total));
-  } catch (error) {
-    logger.error('List catalogs error:', error);
-    errorResponse(res, 'Failed to fetch catalogs', 500, error);
-  }
-};
-
-// Get single catalog (admin)
-export const getCatalog = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    const catalog = await prisma.catalog.findUnique({
-      where: { id: BigInt(id) },
-      include: {
-        categories: {
-          include: {
-            category: {
-              select: { id: true, name: true, slug: true },
-            },
-          },
-        },
-        items: true,
-        images: {
-          orderBy: { sortOrder: 'asc' },
-        },
-      },
-    });
-
-    if (!catalog) {
-      errorResponse(res, 'Catalog not found', 404);
-      return;
-    }
-
-    successResponse(res, catalog);
-  } catch (error) {
-    logger.error('Get catalog error:', error);
-    errorResponse(res, 'Failed to fetch catalog', 500, error);
-  }
-};
-
-// Create catalog (admin)
-export const createCatalog = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, slug, description, shortDesc, bullets, imageUrl, categoryIds } = req.body;
-
-    const catalog = await prisma.catalog.create({
-      data: {
-        name,
-        slug,
-        description,
-        shortDesc,
-        bullets,
-        imageUrl,
-        categories: categoryIds?.length > 0 ? {
-          create: categoryIds.map((id: string) => ({ categoryId: BigInt(id) })),
-        } : undefined,
-      },
-      include: {
-        categories: {
-          include: {
-            category: { select: { name: true } },
-          },
-        },
-      },
-    });
-
-    successResponse(res, catalog, 'Catalog created successfully', 201);
-  } catch (error) {
-    logger.error('Create catalog error:', error);
-    errorResponse(res, 'Failed to create catalog', 500, error);
-  }
-};
-
-// Update catalog (admin)
-export const updateCatalog = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const { name, slug, description, shortDesc, bullets, imageUrl, isActive } = req.body;
-
-    const catalog = await prisma.catalog.update({
-      where: { id: BigInt(id) },
-      data: {
-        name,
-        slug,
-        description,
-        shortDesc,
-        bullets,
-        imageUrl,
-        isActive,
-      },
-      include: {
-        categories: {
-          include: {
-            category: { select: { name: true } },
-          },
-        },
-      },
-    });
-
-    successResponse(res, catalog, 'Catalog updated successfully');
-  } catch (error) {
-    logger.error('Update catalog error:', error);
-    errorResponse(res, 'Failed to update catalog', 500, error);
-  }
-};
-
-// Delete catalog (admin)
-export const deleteCatalog = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { id } = req.params;
-
-    await prisma.catalog.delete({
-      where: { id: BigInt(id) },
-    });
-
-    successResponse(res, null, 'Catalog deleted successfully');
-  } catch (error) {
-    logger.error('Delete catalog error:', error);
-    errorResponse(res, 'Failed to delete catalog', 500, error);
   }
 };

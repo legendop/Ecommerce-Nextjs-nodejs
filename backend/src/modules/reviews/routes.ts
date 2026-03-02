@@ -1,67 +1,82 @@
 import { Router } from 'express';
 import { body, param } from 'express-validator';
 import {
-  getCatalogReviews,
+  getProductReviews,
   createReview,
   updateReview,
   deleteReview,
   getMyReviews,
+  markHelpful,
   adminListReviews,
+  adminGetReview,
   verifyReview,
+  adminDeleteReview,
 } from './controller';
-import { authenticate, requireAdmin } from '../../middleware/auth';
-import { validate } from '../../middleware/validateRequest';
+import { authenticate, requireManager } from '../../middleware/auth.middleware';
+import validate from '../../middleware/validate.middleware';
 
 const router = Router();
 
-// Public routes
+// ==========================================
+// PUBLIC ROUTES
+// ==========================================
 router.get(
-  '/catalog/:catalogId',
-  validate([param('catalogId').isNumeric().withMessage('Invalid catalog ID')]),
-  getCatalogReviews
+  '/product/:productId',
+  [param('productId').isNumeric().withMessage('Invalid product ID')],
+  validate,
+  getProductReviews
 );
 
-// Authenticated user routes
+// Mark helpful (no auth needed, but could rate limit)
+router.post('/:id/helpful', markHelpful);
+
+// ==========================================
+// AUTHENTICATED USER ROUTES
+// ==========================================
 router.use(authenticate);
 
 router.get('/my-reviews', getMyReviews);
 
 router.post(
   '/',
-  validate([
-    body('catalogId').isNumeric().withMessage('Catalog ID is required'),
+  [
+    body('productId').isNumeric().withMessage('Product ID is required'),
+    body('orderId').isNumeric().withMessage('Order ID is required'),
     body('rating')
       .isInt({ min: 1, max: 5 })
       .withMessage('Rating must be between 1 and 5'),
-    body('comment')
-      .optional()
-      .trim()
-      .isLength({ min: 3, max: 1000 })
-      .withMessage('Comment must be between 3 and 1000 characters'),
-  ]),
+    body('title').optional().trim(),
+    body('comment').optional().trim(),
+    body('images').optional().isArray(),
+  ],
+  validate,
   createReview
 );
 
 router.patch(
   '/:id',
-  validate([
+  [
     param('id').isNumeric().withMessage('Invalid review ID'),
     body('rating')
       .optional()
       .isInt({ min: 1, max: 5 })
       .withMessage('Rating must be between 1 and 5'),
-    body('comment')
-      .optional()
-      .trim()
-      .isLength({ min: 3, max: 1000 }),
-  ]),
+    body('title').optional().trim(),
+    body('comment').optional().trim(),
+    body('images').optional().isArray(),
+  ],
+  validate,
   updateReview
 );
 
 router.delete('/:id', deleteReview);
 
-// Admin routes
-router.get('/admin/all', requireAdmin, adminListReviews);
-router.patch('/admin/:id/verify', requireAdmin, verifyReview);
+// ==========================================
+// ADMIN ROUTES (Manager and above)
+// ==========================================
+router.get('/admin/all', requireManager, adminListReviews);
+router.get('/admin/:id', requireManager, adminGetReview);
+router.patch('/admin/:id/verify', requireManager, verifyReview);
+router.delete('/admin/:id', requireManager, adminDeleteReview);
 
 export default router;
